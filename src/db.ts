@@ -1,25 +1,7 @@
-// src/db.ts
-import Dexie, { type  Table} from 'dexie';
+import Dexie, { type Table } from 'dexie';
 
-// 1. DataModels.kt の PhraseItem に相当
-export interface PhraseItem {
-  original: string;
-  pronunciation: string;
-  translated: string;
-}
-
-// 2. AppDatabase.kt の ChatTurnEntity に相当
-export interface ChatTurnEntity {
-  id?: number; // autoGenerate = true のためオプショナル(?)にする
-  styleId: string;
-  input: string;
-  isMe: boolean;
-  suggestions: PhraseItem[];
-}
-
-// DataModels.kt の ChatStylePreset に相当 (Web版ではプリセットもDBに入れると管理が楽です)
 export interface ChatStylePreset {
-  id: string;
+  id?: number;
   name: string;
   myLang: string;
   myLocaleCode: string;
@@ -35,22 +17,32 @@ export interface ChatStylePreset {
   voiceId: string;
 }
 
-// 3. Database (データベース本体)
-export class AppDatabase extends Dexie {
-  // テーブルの宣言
-  chatTurns!: Table<ChatTurnEntity, number>;
-  presets!: Table<ChatStylePreset, string>;
+export interface PhraseItem {
+  original: string;
+  pronunciation: string;
+  translated: string;
+}
+
+export interface ChatTurnEntity {
+  id?: number;
+  styleId: number;
+  input: string;
+  isMe: boolean;
+  suggestions: PhraseItem[];
+  timestamp: number;
+}
+
+export class Shabelink2DB extends Dexie {
+  styles!: Table<ChatStylePreset>;
+  history!: Table<ChatTurnEntity>;
 
   constructor() {
-    super('Shabelink2Database');
-    
-    // テーブルの定義 (検索条件に使う項目だけをインデックスとして指定します)
+    super('Shabelink2WebDB');
     this.version(1).stores({
-      chatTurns: '++id, styleId', // ++id はオートインクリメント
-      presets: 'id'               // UUIDを主キーにする
+      styles: '++id, name',
+      history: '++id, styleId, timestamp' 
     });
   }
 }
 
-// データベースのインスタンスを作成してエクスポート
-export const db = new AppDatabase();
+export const db = new Shabelink2DB();
