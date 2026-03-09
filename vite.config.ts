@@ -16,7 +16,16 @@ export default defineConfig({
         short_name: 'Shabelink2',
         description: 'AI Translation & Chat Assistant',
         theme_color: '#ffffff',
-        icons: [] // ※アイコン画像は後で追加するので、今は空で大丈夫です
+        icons: [{
+      src: 'icon-192.png',
+      sizes: '192x192',
+      type: 'image/png'
+    },
+    {
+      src: 'icon-512.png',
+      sizes: '512x512',
+      type: 'image/png'
+    }] // ※アイコン画像は後で追加するので、今は空で大丈夫です
       }
     })
   ]
