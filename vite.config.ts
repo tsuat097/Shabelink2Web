@@ -1,3 +1,5 @@
+/// <reference types="vite-plugin-pwa/client" />
+
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
@@ -25,7 +27,7 @@ export default defineConfig({
       src: 'icon-512.png',
       sizes: '512x512',
       type: 'image/png'
-    }] // ※アイコン画像は後で追加するので、今は空で大丈夫です
+    }]
       }
     })
   ]
