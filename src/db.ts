@@ -1,5 +1,5 @@
 // src/db.ts
-import Dexie, { Table } from 'dexie';
+import Dexie, { type  Table} from 'dexie';
 
 // 1. DataModels.kt の PhraseItem に相当
 export interface PhraseItem {

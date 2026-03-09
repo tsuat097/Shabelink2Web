@@ -3,8 +3,8 @@ import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 
 export default defineConfig({
-  plugins: [
-    base: '/Shabelink2Web/', //
+  base: '/Shabelink2Web/', //
+  plugins: [ 
     react(),
     VitePWA({
       registerType: 'autoUpdate',
