@@ -1,6 +1,6 @@
 // src/App.tsx
 import { useState } from 'react';
-import { ThemeProvider, createTheme, CssBaseline, AppBar, Toolbar, Typography, Container, Box, TextField, Button, Paper, Switch, FormControlLabel, Divider } from '@mui/material';
+import { ThemeProvider, createTheme, CssBaseline, AppBar, Toolbar, Typography, Container, Box, TextField, Button, Paper, Switch, FormControlLabel} from '@mui/material';
 import { streamGenerateContent } from './GeminiApi';
 
 const theme = createTheme({
