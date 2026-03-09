@@ -4,6 +4,7 @@ import { VitePWA } from 'vite-plugin-pwa'
 
 export default defineConfig({
   plugins: [
+    base: '/Shabelink2Web/', //
     react(),
     VitePWA({
       registerType: 'autoUpdate',
