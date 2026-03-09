@@ -10,6 +10,7 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
+      includeAssets: ['icon-192.png', 'icon-512.png', 'apple-touch-icon.png'],
       devOptions: {
         enabled: true // 開発中もPWAの動作を確認できるようにする設定です
       },
