@@ -58,6 +58,18 @@ function App() {
   const [activeTtsKey, setActiveTtsKey] = useState<string | null>(null);
   const ttsAbortRef = useRef<AbortController | null>(null);
 
+  // ----------------------------
+  // ★ TTS: ボイスID選択（カードごと）を追加
+  // ----------------------------
+  const [voiceIdByKey, setVoiceIdByKey] = useState<Record<string, string>>({});
+  const getVoiceIdForBubble = (key: string): string => {
+    // 優先順位: 1.ローカルな選択 2.currentStyleのデフォルト 3.puck
+    return voiceIdByKey[key] ?? currentStyle?.voiceId ?? 'puck';
+  };
+  const setVoiceIdForBubble = (key: string, voiceId: string) => {
+    setVoiceIdByKey((prev) => ({ ...prev, [key]: voiceId }));
+  };
+
   // ==========================================
   // 共通ユーティリティ
   // ==========================================
@@ -77,6 +89,13 @@ function App() {
   };
 
   // ボイスラベルマップは不要になり、actingVoices を直接使うため削除
+  // const voiceLabelMap ... は削除されます
+
+  const getVoiceLabel = (voiceId?: string) => {
+    const voiceInfo = actingVoices.find(v => v.id === voiceId);
+    return voiceInfo ? voiceInfo.displayName : (voiceId || 'Voice');
+  };
+
 
   // speechSynthesis（端末TTS）
   const speakDirect = (text: string, lang: string) => {
@@ -122,6 +141,7 @@ function App() {
     if (!t || !currentStyle) return;
 
     const engine = getEngine(key);
+    const bubbleVoiceId = getVoiceIdForBubble(key); // ★そのバブル固有のボイスIDを取得
 
     // 他カードが再生中なら止める（切替）
     if (activeTtsKey && activeTtsKey !== key) {
@@ -172,9 +192,9 @@ function App() {
         apiKey,
         text: t,
         style: styleForTts,
-        // ★ GeminiTTS には partnerLang を渡す
+        // ★ GeminiTTS には partnerLang を渡し、ボイスIDもバブル固有のものを使用
         lang: currentStyle.partnerLang || 'English',
-        voiceId: currentStyle.voiceId || 'puck',
+        voiceId: bubbleVoiceId, // ★バブル固有のボイスIDを使用
         signal: controller.signal,
         callbacks: {
           onLog: (m) => setDebugLogs((prev) => [...prev, `[TTS] ${m}`]),
@@ -706,6 +726,7 @@ function App() {
                     const ttsKey = `stream-${idx}`;
                     const st = getStatus(ttsKey);
                     const engine = getEngine(ttsKey);
+                    const bubbleVoiceId = getVoiceIdForBubble(ttsKey); // ★そのバブル固有のボイスIDを取得
 
                     return (
                       <div key={idx} className="rich-result-container">
@@ -720,21 +741,18 @@ function App() {
                         <div className="result-footer">
                           {/* メイン画面のボイス選択ドロップダウン */}
                           <select
-                                  className="m3-input m3-select"
-                                  style={{ flex: 1, minWidth: '150px' }}
-                                  value={currentStyle?.voiceId || 'puck'} // ★ currentStyle?.voiceId を参照
-                                  onChange={async (e) => {
-                                    const newVoiceId = e.target.value;
-                                    if (currentStyle && currentStyle.id) {
-                                      // ★ DBを更新し、currentStyle を直接変更する
-                                      await db.styles.update(currentStyle.id, { voiceId: newVoiceId });
-                                      setCurrentStyle(prev => prev ? { ...prev, voiceId: newVoiceId } : null);
-                                    }
-                                  }}
-                                >
-                                  {actingVoices.map(voice => (
-                                    <option key={voice.id} value={voice.id}>{voice.displayName}</option>
-                                  ))}
+                              className="m3-input m3-select"
+                              style={{ flex: 1, minWidth: '150px' }}
+                              // ★ value をローカルstateから取得
+                              value={bubbleVoiceId}
+                              onChange={async (e) => {
+                                // ★ ローカルstateを更新 (globalな currentStyle.voiceId は更新しない)
+                                setVoiceIdForBubble(ttsKey, e.target.value);
+                              }}
+                            >
+                              {actingVoices.map(voice => (
+                                <option key={voice.id} value={voice.id}>{voice.displayName}</option>
+                              ))}
                             </select>
 
                           {/* トグル＝エンジン切替（カード別） */}
@@ -789,6 +807,7 @@ function App() {
                     const ttsKey = `turn-${String(turn.id)}-${idx}`;
                     const st = getStatus(ttsKey);
                     const engine = getEngine(ttsKey);
+                    const bubbleVoiceId = getVoiceIdForBubble(ttsKey); // ★そのバブル固有のボイスIDを取得
 
                     const legacyDetails =
                       s.original && s.original.trim().length > 0 && s.original !== turn.input ? s.original : '';
@@ -813,17 +832,13 @@ function App() {
                           <select
                               className="m3-input m3-select"
                               style={{ flex: 1, minWidth: '150px' }}
-                              value={currentStyle?.voiceId || 'puck'}
+                              // ★ value をローカルstateから取得
+                              value={bubbleVoiceId}
                               onChange={async (e) => {
-                                const newVoiceId = e.target.value;
-                                if (currentStyle && currentStyle.id) {
-                                  // DBを更新
-                                  await db.styles.update(currentStyle.id, { voiceId: newVoiceId });
-                                  // UI上の currentStyle を更新
-                                  setCurrentStyle(prev => prev ? { ...prev, voiceId: newVoiceId } : null);
-                                }
+                                // ★ ローカルstateを更新 (globalな currentStyle.voiceId は更新しない)
+                                setVoiceIdForBubble(ttsKey, e.target.value);
                               }}
-                                                            >
+                            >
                               {actingVoices.map(voice => (
                                 <option key={voice.id} value={voice.id}>{voice.displayName}</option>
                               ))}
@@ -1042,4 +1057,4 @@ function App() {
   );
 }
 
-export default App; 
+export default App;
