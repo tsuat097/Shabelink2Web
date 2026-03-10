@@ -91,11 +91,11 @@ function App() {
   // ボイスラベルマップは不要になり、actingVoices を直接使うため削除
   // const voiceLabelMap ... は削除されます
 
-  const getVoiceLabel = (voiceId?: string) => {
+ /* const getVoiceLabel = (voiceId?: string) => {
     const voiceInfo = actingVoices.find(v => v.id === voiceId);
     return voiceInfo ? voiceInfo.displayName : (voiceId || 'Voice');
   };
-
+*/
 
   // speechSynthesis（端末TTS）
   const speakDirect = (text: string, lang: string) => {
