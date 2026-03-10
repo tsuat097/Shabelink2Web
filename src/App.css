@@ -1,3 +1,5 @@
+/* src/App.css */
+
 * { box-sizing: border-box; }
 
 body {
@@ -62,7 +64,7 @@ body {
 .toggle-thumb {
   width: 24px; height: 24px; background-color: white; border-radius: 50%; position: absolute; top: 4px; transition: 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
-/* ★ここが修正点：左＝相手(partner)、右＝自分(me) */
+/* 左＝相手(partner)、右＝自分(me) */
 .toggle-switch.partner .toggle-thumb { left: 4px; }
 .toggle-switch.me .toggle-thumb { left: 26px; }
 
@@ -190,18 +192,19 @@ body {
 .result-footer{
   display:flex;
   align-items:center;
-  gap:12px;
+  gap:8px; /* gapを少し詰める */
   margin-top:10px;
 }
 
-.voice-label{
+/* Voice Label は select に置き換わったためコメントアウト */
+/* .voice-label{
   font-size: 0.85rem;
   color:#6b6b6b;
   flex: 1;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
+} */
 
 .tts-engine-label{
   font-size: 0.75rem;
@@ -241,6 +244,7 @@ body {
   position: relative;
   width: 46px;
   height: 26px;
+  flex-shrink: 0; /* 縮まないように */
 }
 .auto-speak input{
   opacity: 0;
@@ -316,9 +320,33 @@ body {
 .flex-1 { flex: 1; }
 .m3-input-group { display: flex; flex-direction: column; gap: 4px; }
 .m3-input-group label { font-size: 0.75rem; color: #49454f; margin-left: 4px; font-weight: bold; }
+/* ドロップダウンを含む input/select の基本スタイル */
 .m3-input { padding: 12px 16px; border: 1px solid #79747e; border-radius: 4px; font-size: 1rem; background: transparent; color: #1d1b20; }
 .m3-input:focus { border: 2px solid #673ab7; outline: none; padding: 11px 15px; }
-.m3-select { appearance: none; background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2349454f' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e"); background-repeat: no-repeat; background-position: right 12px center; background-size: 16px; padding-right: 40px; }
+.m3-select {
+  appearance: none;
+  background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2349454f' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  background-size: 16px;
+  padding-right: 40px;
+  width: 100%; /* 親要素の幅いっぱいに */
+  box-sizing: border-box; /* paddingを含めて幅を計算 */
+}
+
+/* スタイル編集ダイアログ内のロケール選択ドロップダウンの文字サイズを調整 */
+.m3-dialog .m3-input-group > select.m3-select option {
+  font-size: 0.9em; /* 例: 10%小さくする */
+}
+
+/* スタイル編集ダイアログ内のドロップダウンの幅を調整 */
+.m3-dialog .m3-input-group > select.m3-select {
+  /* max-width: 100%; /* width: 100% を指定すれば不要な場合が多い */
+  flex-grow: 0; /* flex:1 が当たっている場合の影響を打ち消す */
+  flex-shrink: 1; 
+  flex-basis: auto; 
+}
+
 
 .m3-text-btn { background: transparent; border: none; color: #673ab7; font-weight: bold; padding: 10px 16px; border-radius: 20px; cursor: pointer; }
 .m3-filled-btn { background: #673ab7; color: #ffffff; border: none; font-weight: bold; padding: 10px 24px; border-radius: 20px; cursor: pointer; }

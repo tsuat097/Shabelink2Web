@@ -2,7 +2,7 @@
 import { useState, useCallback, useEffect, useRef, type ChangeEvent } from 'react';
 import { runTranslation, type TranslationResult } from './GeminiApi';
 import { speakWithGeminiTtsRest } from './GeminiTts';
-import { db, type ChatStylePreset, type ChatTurnEntity, type PhraseItem } from './db';
+import { db, type ChatStylePreset, type ChatTurnEntity, type PhraseItem, supportedLocales, actingVoices } from './db'; // ★ db.ts から supportedLocales, actingVoices をインポート
 import { getString } from './strings';
 import './App.css';
 
@@ -76,17 +76,7 @@ function App() {
     }
   };
 
-  const voiceLabelMap: Record<string, string> = {
-    nova: 'Nova [女性・低音]',
-    shimmer: 'Shimmer [女性・高音]',
-    alloy: 'Alloy [女性・中音]',
-    puck: 'Puck [男性・低音]',
-    charon: 'Charon [男性・低音]'
-  };
-  const getVoiceLabel = (voiceId?: string) => {
-    const id = (voiceId || '').trim();
-    return voiceLabelMap[id] || id || 'Voice';
-  };
+  // ボイスラベルマップは不要になり、actingVoices を直接使うため削除
 
   // speechSynthesis（端末TTS）
   const speakDirect = (text: string, lang: string) => {
@@ -723,9 +713,23 @@ function App() {
                         {r.pron && <div className="res-pron">【{getString('pron')}】 {r.pron}</div>}
                         {r.trans && r.trans !== getString('noTranslation') && <div className="res-trans">{r.trans}</div>}
 
-                        {/* Kotlin版：カード最下段 */}
                         <div className="result-footer">
-                          <div className="voice-label">{getVoiceLabel(currentStyle?.voiceId)}</div>
+                          {/* メイン画面のボイス選択ドロップダウン */}
+                          <select
+                              className="m3-input m3-select"
+                              style={{ flex: 1, minWidth: '150px' }}
+                              value={currentStyle?.voiceId || 'puck'}
+                              onChange={async (e) => {
+                                if (currentStyle && currentStyle.id) {
+                                  await db.styles.update(currentStyle.id, { voiceId: e.target.value });
+                                  setCurrentStyle(prev => prev ? { ...prev, voiceId: e.target.value } : null);
+                                }
+                              }}
+                            >
+                              {actingVoices.map(voice => (
+                                <option key={voice.id} value={voice.id}>{voice.displayName}</option>
+                              ))}
+                            </select>
 
                           {/* トグル＝エンジン切替（カード別） */}
                           <label className="auto-speak" title={engine === 'gemini' ? getString('ttsAiTitle') : getString('ttsDeviceTitle')}>
@@ -799,7 +803,22 @@ function App() {
                         {s.translated && s.translated !== getString('noTranslation') && <div className="res-trans">{s.translated}</div>}
 
                         <div className="result-footer">
-                          <div className="voice-label">{getVoiceLabel(currentStyle?.voiceId)}</div>
+                           {/* メイン画面のボイス選択ドロップダウン */}
+                          <select
+                              className="m3-input m3-select"
+                              style={{ flex: 1, minWidth: '150px' }}
+                              value={currentStyle?.voiceId || 'puck'}
+                              onChange={async (e) => {
+                                if (currentStyle && currentStyle.id) {
+                                  await db.styles.update(currentStyle.id, { voiceId: e.target.value });
+                                  setCurrentStyle(prev => prev ? { ...prev, voiceId: e.target.value } : null);
+                                }
+                              }}
+                            >
+                              {actingVoices.map(voice => (
+                                <option key={voice.id} value={voice.id}>{voice.displayName}</option>
+                              ))}
+                            </select>
 
                           <label className="auto-speak" title={engine === 'gemini' ? getString('ttsAiTitle') : getString('ttsDeviceTitle')}>
                             <input
@@ -942,27 +961,55 @@ function App() {
             <div className="dialog-body">
               <div className="m3-input-group"><label>{getString('styleName')}</label><input className="m3-input" value={editingStyle.name || ''} onChange={(e) => setEditingStyle({ ...editingStyle, name: e.target.value })} /></div>
               <div className="m3-row">
-                <div className="m3-input-group flex-1"><label>{getString('myLang')}</label><input className="m3-input" value={editingStyle.myLang || ''} onChange={(e) => setEditingStyle({ ...editingStyle, myLang: e.target.value })} /></div>
-                <div className="m3-input-group flex-1"><label>{getString('myLocale')}</label><input className="m3-input" value={editingStyle.myLocaleCode || ''} onChange={(e) => setEditingStyle({ ...editingStyle, myLocaleCode: e.target.value })} /></div>
+                <div className="m3-input-group flex-1">
+                  <label>{getString('myLang')}</label><input className="m3-input" value={editingStyle.myLang || ''} onChange={(e) => setEditingStyle({ ...editingStyle, myLang: e.target.value })} />
+                </div>
+                <div className="m3-input-group flex-1">
+                  <label>{getString('myLocale')}</label>
+                  <select
+                    className="m3-input m3-select"
+                    value={editingStyle.myLocaleCode || ''}
+                    onChange={e => setEditingStyle({...editingStyle, myLocaleCode: e.target.value})}
+                  >
+                    {supportedLocales.map(locale => (
+                      <option key={locale.code} value={locale.code}>{locale.displayName}</option>
+                    ))}
+                  </select>
+                </div>
               </div>
               <div className="m3-row">
-                <div className="m3-input-group flex-1"><label>{getString('partnerLang')}</label><input className="m3-input" value={editingStyle.partnerLang || ''} onChange={(e) => setEditingStyle({ ...editingStyle, partnerLang: e.target.value })} /></div>
-                <div className="m3-input-group flex-1"><label>{getString('partnerLocale')}</label><input className="m3-input" value={editingStyle.partnerLocaleCode || ''} onChange={(e) => setEditingStyle({ ...editingStyle, partnerLocaleCode: e.target.value })} /></div>
+                <div className="m3-input-group flex-1">
+                  <label>{getString('partnerLang')}</label><input className="m3-input" value={editingStyle.partnerLang || ''} onChange={(e) => setEditingStyle({ ...editingStyle, partnerLang: e.target.value })} />
+                </div>
+                <div className="m3-input-group flex-1">
+                  <label>{getString('partnerLocale')}</label>
+                  <select
+                    className="m3-input m3-select"
+                    value={editingStyle.partnerLocaleCode || ''}
+                    onChange={e => setEditingStyle({...editingStyle, partnerLocaleCode: e.target.value})}
+                  >
+                    {supportedLocales.map(locale => (
+                      <option key={locale.code} value={locale.code}>{locale.displayName}</option>
+                    ))}
+                  </select>
+                </div>
               </div>
               <div className="m3-row">
-                <div className="m3-input-group flex-1"><label>{getString('myGender')}</label><input className="m3-input" value={editingStyle.myGender || ''} onChange={(e) => setEditingStyle({ ...editingStyle, myGender: e.target.value })} /></div>
-                <div className="m3-input-group flex-1"><label>{getString('partnerGender')}</label><input className="m3-input" value={editingStyle.partnerGender || ''} onChange={(e) => setEditingStyle({ ...editingStyle, partnerGender: e.target.value })} /></div>
+                <div className="m3-input-group flex-1">
+                  <label>{getString('myGender')}</label><input className="m3-input" value={editingStyle.myGender || ''} onChange={(e) => setEditingStyle({ ...editingStyle, myGender: e.target.value })} />
+                </div>
+                <div className="m3-input-group flex-1">
+                  <label>{getString('partnerGender')}</label><input className="m3-input" value={editingStyle.partnerGender || ''} onChange={(e) => setEditingStyle({ ...editingStyle, partnerGender: e.target.value })} />
+                </div>
               </div>
               <div className="m3-input-group"><label>{getString('relationship')}</label><input className="m3-input" value={editingStyle.relationship || ''} onChange={(e) => setEditingStyle({ ...editingStyle, relationship: e.target.value })} /></div>
               <div className="m3-input-group"><label>{getString('baseTone')}</label><input className="m3-input" value={editingStyle.baseTone || ''} onChange={(e) => setEditingStyle({ ...editingStyle, baseTone: e.target.value })} /></div>
 
               <div className="m3-input-group"><label>{getString('voiceId')}</label>
                 <select className="m3-input m3-select" value={editingStyle.voiceId || 'puck'} onChange={(e) => setEditingStyle({ ...editingStyle, voiceId: e.target.value })}>
-                  <option value="nova">Nova [女性・低音]</option>
-                  <option value="shimmer">Shimmer [女性・高音]</option>
-                  <option value="alloy">Alloy [女性・中音]</option>
-                  <option value="puck">Puck [男性・低音]</option>
-                  <option value="charon">Charon [男性・低音]</option>
+                  {actingVoices.map(voice => (
+                    <option key={voice.id} value={voice.id}>{voice.displayName}</option>
+                  ))}
                 </select>
               </div>
 
@@ -972,8 +1019,12 @@ function App() {
             </div>
 
             <div className="dialog-footer">
-              <button onClick={() => setShowEditDialog(false)} className="m3-text-btn" type="button">{getString('cancelBtn')}</button>
-              <button onClick={handleSaveStyle} className="m3-filled-btn" type="button">{getString('saveBtn')}</button>
+              <button onClick={() => setShowEditDialog(false)} className="m3-text-btn" type="button">
+                {getString('cancelBtn')}
+              </button>
+              <button onClick={handleSaveStyle} className="m3-filled-btn" type="button">
+                {getString('saveBtn')}
+              </button>
             </div>
           </div>
         </div>
