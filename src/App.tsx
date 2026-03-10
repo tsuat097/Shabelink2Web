@@ -815,12 +815,15 @@ function App() {
                               style={{ flex: 1, minWidth: '150px' }}
                               value={currentStyle?.voiceId || 'puck'}
                               onChange={async (e) => {
+                                const newVoiceId = e.target.value;
                                 if (currentStyle && currentStyle.id) {
-                                  await db.styles.update(currentStyle.id, { voiceId: e.target.value });
-                                  setCurrentStyle(prev => prev ? { ...prev, voiceId: e.target.value } : null);
+                                  // DBを更新
+                                  await db.styles.update(currentStyle.id, { voiceId: newVoiceId });
+                                  // UI上の currentStyle を更新
+                                  setCurrentStyle(prev => prev ? { ...prev, voiceId: newVoiceId } : null);
                                 }
                               }}
-                            >
+                                                            >
                               {actingVoices.map(voice => (
                                 <option key={voice.id} value={voice.id}>{voice.displayName}</option>
                               ))}
