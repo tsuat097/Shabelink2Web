@@ -900,7 +900,15 @@ function App() {
               <h2 style={{ margin: 0, fontSize: '1.4rem' }}>{getString('importSelectTitle')}</h2>
             </div>
 
-            <div className="dialog-body"> {/* overflow-x:hidden は CSSで対応 */}
+            <div 
+                className="dialog-body" 
+                onClick={(e) => {
+                    // 入力欄以外の背景部分をタップした時にキーボードを閉じる
+                    if (e.target === e.currentTarget) {
+                      (document.activeElement as HTMLElement)?.blur();
+                    }
+                 }}
+                >{/* overflow-x:hidden は CSSで対応 */}
               {importCandidates.map((candidate, idx) => (
                 <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 0', borderBottom: '1px solid #e0e0e0' }}>
                   <input
