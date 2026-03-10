@@ -50,7 +50,7 @@ body {
   gap: 16px;
 }
 
-/* トグル */
+/* ロールトグル */
 .role-toggle-section {
   display: flex; justify-content: center; align-items: center; gap: 16px; margin: 8px 0;
 }
@@ -62,8 +62,7 @@ body {
 .toggle-thumb {
   width: 24px; height: 24px; background-color: white; border-radius: 50%; position: absolute; top: 4px; transition: 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
-
-/* 左＝相手(partner)、右＝自分(me) */
+/* ★ここが修正点：左＝相手(partner)、右＝自分(me) */
 .toggle-switch.partner .toggle-thumb { left: 4px; }
 .toggle-switch.me .toggle-thumb { left: 26px; }
 
@@ -76,6 +75,48 @@ body {
 .textarea-container textarea {
   width: 100%; height: 80px; background: transparent; border: none; resize: none; font-size: 1.1rem; color: #333; outline: none;
 }
+
+/* マイクボタン入力枠内 */
+.textarea-with-mic {
+  position: relative;
+}
+.textarea-with-mic textarea {
+  padding-right: 52px; /* 右側にマイク分の余白 */
+}
+.mic-icon-btn {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  width: 40px;
+  height: 40px;
+  border-radius: 20px;
+  border: none;
+  background: rgba(255,255,255,0.9);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 40px;
+  transition: all 0.2s ease-out;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #444;
+}
+.mic-icon-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.mic-icon-btn.listening {
+  background: #ffebee;
+  color: #c62828;
+  box-shadow: 0 0 0 5px rgba(255,100,100,0.3);
+  animation: pulseMic 1s infinite alternate;
+}
+@keyframes pulseMic {
+  from { transform: scale(1); }
+  to { transform: scale(1.05); }
+}
+
 
 .main-translate-btn {
   width: 100%; padding: 14px; border-radius: 24px; border: none; font-size: 1rem; font-weight: bold; cursor: pointer; background-color: #eaddff; color: #9c9c9c; transition: 0.2s;

@@ -126,7 +126,7 @@ function App() {
     setActiveTtsKey(null);
   };
 
-  // 「別カード押したら今の再生を止めて切替」
+  // TTS再生：「別カード押したら今の再生を止めて切替」
   const playTts = async (key: string, text: string) => {
     const t = (text || '').trim();
     if (!t || !currentStyle) return;
@@ -614,6 +614,7 @@ function App() {
   // ==========================================
   return (
     <div className="app-container">
+      {/* Top */}
       <div className="top-bar">
         <div className="top-bar-header">
           <h1>Shabelink2</h1>
@@ -650,49 +651,50 @@ function App() {
         </div>
       </div>
 
+      {/* Scroll */}
       <div className="scrollable-content">
+        {/* Role toggle */}
         <div className="role-toggle-section">
-            {/* 左：相手が話す */}
-            <span className={`role-label ${!isMeSpeaking ? 'active' : ''}`}>
-              {getString('partnerSpeaking')}
-            </span>
+          <span className={`role-label ${!isMeSpeaking ? 'active' : ''}`}>
+            {getString('partnerSpeaking')}
+          </span>
 
-            <div
-              className={`toggle-switch ${isMeSpeaking ? 'me' : 'partner'}`}
-              onClick={() => !isTranslating && setIsMeSpeaking(!isMeSpeaking)}
-            >
-              <div className="toggle-thumb" />
-            </div>
+          <div
+            className={`toggle-switch ${isMeSpeaking ? 'me' : 'partner'}`}
+            onClick={() => !isTranslating && setIsMeSpeaking(!isMeSpeaking)}
+          >
+            <div className="toggle-thumb" />
+          </div>
 
-            {/* 右：自分が話す */}
-            <span className={`role-label ${isMeSpeaking ? 'active' : ''}`}>
-              {getString('meSpeaking')}
-            </span>
+          <span className={`role-label ${isMeSpeaking ? 'active' : ''}`}>
+            {getString('meSpeaking')}
+          </span>
         </div>
 
-
-        <div className={`textarea-container ${isMeSpeaking ? 'me' : 'partner'}`}>
+        {/* Input */}
+        <div className={`textarea-container ${isMeSpeaking ? 'me' : 'partner'} textarea-with-mic`}>
           <textarea
             placeholder={getString('inputPlaceholder')}
             value={inputText}
             onChange={(e) => setInputText(e.target.value)}
             disabled={isTranslating}
           />
+          <button
+            className={`mic-icon-btn ${isListening ? 'listening' : ''}`}
+            type="button"
+            onClick={isListening ? stopSpeechRecognition : startSpeechRecognition}
+            disabled={isTranslating || !currentStyle}
+            aria-label={isListening ? getString('sttStop') : getString('sttInput')}
+            title={isListening ? getString('sttStop') : getString('sttInput')}
+          >
+            🎙️
+          </button>
         </div>
 
+        {/* Actions */}
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="main-translate-btn" onClick={handleTranslate} disabled={!inputText || isTranslating} style={{ flex: 1 }} type="button">
             {isTranslating ? getString('translating') : getString('translateBtn')}
-          </button>
-
-          <button
-            className="m3-filled-btn"
-            style={{ width: 120, background: isListening ? '#ffebee' : '#f0edf5', color: '#111' }}
-            onClick={isListening ? stopSpeechRecognition : startSpeechRecognition}
-            disabled={isTranslating || !currentStyle}
-            type="button"
-          >
-            {isListening ? '🎙️停止' : '🎙️入力'}
           </button>
         </div>
 
@@ -721,9 +723,11 @@ function App() {
                         {r.pron && <div className="res-pron">【{getString('pron')}】 {r.pron}</div>}
                         {r.trans && r.trans !== getString('noTranslation') && <div className="res-trans">{r.trans}</div>}
 
+                        {/* Kotlin版：カード最下段 */}
                         <div className="result-footer">
                           <div className="voice-label">{getVoiceLabel(currentStyle?.voiceId)}</div>
 
+                          {/* トグル＝エンジン切替（カード別） */}
                           <label className="auto-speak" title={engine === 'gemini' ? getString('ttsAiTitle') : getString('ttsDeviceTitle')}>
                             <input
                               type="checkbox"

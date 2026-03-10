@@ -11,7 +11,7 @@ const dictionary = {
     pattern: "パターン",
     literal: "直訳",
     intent: "意図",
-    pron: "発音", // 既存の 'pron' をラベルとして使う
+    pron: "発音", // 'pronLabel' から 'pron' に修正
     noTranslation: "(翻訳結果なし)",
     settingsTitle: "設定",
     debugToggle: "デバッグ情報を表示",
@@ -56,7 +56,11 @@ const dictionary = {
     // 追加：スピーカーボタンのツールチップ
     ttsPlay: "読み上げ",
     ttsStop: "停止",
-    ttsLoading: "読み上げ準備中..."
+    ttsLoading: "読み上げ準備中...",
+
+    // 追加：音声入力ボタンのツールチップ
+    sttInput: "音声入力",
+    sttStop: "音声入力を停止"
   },
 
   en: {
@@ -69,7 +73,7 @@ const dictionary = {
     pattern: "Pattern",
     literal: "Literal",
     intent: "Intent",
-    pron: "Pronunciation",
+    pron: "Pronunciation", // 'pronLabel' から 'pron' に修正
     noTranslation: "(No translation)",
     settingsTitle: "Settings",
     debugToggle: "Show Debug Info",
@@ -110,7 +114,10 @@ const dictionary = {
 
     ttsPlay: "Play",
     ttsStop: "Stop",
-    ttsLoading: "Loading..."
+    ttsLoading: "Loading...",
+
+    sttInput: "Voice Input",
+    sttStop: "Stop Voice Input"
   }
 };
 
@@ -118,5 +125,6 @@ export type StringKey = keyof typeof dictionary.ja;
 
 export const getString = (key: StringKey): string => {
   const userLang = navigator.language.startsWith('ja') ? 'ja' : 'en';
+  // 型エラー回避のため as StringKey を使用
   return dictionary[userLang][key] || dictionary.ja[key];
 };
