@@ -11,6 +11,7 @@ type SpeakArgs = {
   apiKey: string;
   text: string;
   style: string;   // Kotlinの "$style: $text" の style 部分
+  lang: string;    // ★追加: GeminiTTSに渡す言語名（myLang/partnerLangの値）
   voiceId: string; // puck/nova/...
   signal?: AbortSignal;
   callbacks?: TtsCallbacks;
@@ -82,7 +83,7 @@ async function playPcm16Mono24k(pcmBytes: Uint8Array, cb?: TtsCallbacks) {
 }
 
 export async function speakWithGeminiTtsRest(args: SpeakArgs): Promise<void> {
-  const { apiKey, text, style, voiceId, callbacks, signal } = args;
+  const { apiKey, text, style, lang, voiceId, callbacks, signal } = args; // ★ lang を分解代入
 
   const targetVoice = (voiceId || "puck").trim() || "puck";
 
@@ -95,7 +96,7 @@ export async function speakWithGeminiTtsRest(args: SpeakArgs): Promise<void> {
     model: "gemini-2.5-flash-preview-tts",
     contents: [
       {
-        parts: [{ text: `${style}: ${text}` }]
+        parts: [{ text: `${style}, ${lang}: ${text}` }] // ★ style と lang をプロンプトに含める
       }
     ],
     safetySettings: [

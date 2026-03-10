@@ -2,7 +2,7 @@
 import { useState, useCallback, useEffect, useRef, type ChangeEvent } from 'react';
 import { runTranslation, type TranslationResult } from './GeminiApi';
 import { speakWithGeminiTtsRest } from './GeminiTts';
-import { db, type ChatStylePreset, type ChatTurnEntity, type PhraseItem, supportedLocales, actingVoices } from './db'; // ★ db.ts から supportedLocales, actingVoices をインポート
+import { db, type ChatStylePreset, type ChatTurnEntity, type PhraseItem, supportedLocales, actingVoices } from './db';
 import { getString } from './strings';
 import './App.css';
 
@@ -88,7 +88,7 @@ function App() {
       try {
         window.speechSynthesis.cancel();
         const u = new SpeechSynthesisUtterance(t);
-        u.lang = lang;
+        u.lang = lang; // ★ロケールコードを渡す
         u.onend = () => resolve();
         u.onerror = () => resolve();
         window.speechSynthesis.speak(u);
@@ -141,6 +141,7 @@ function App() {
     if (engine === 'device') {
       setStatus(key, 'playing');
       try {
+        // ★ speechSynthesis にはロケールコードを渡す
         await speakDirect(t, currentStyle.partnerLocaleCode || 'en-US');
       } finally {
         setStatus(key, 'idle');
@@ -171,6 +172,8 @@ function App() {
         apiKey,
         text: t,
         style: styleForTts,
+        // ★ GeminiTTS には partnerLang を渡す
+        lang: currentStyle.partnerLang || 'English',
         voiceId: currentStyle.voiceId || 'puck',
         signal: controller.signal,
         callbacks: {
@@ -187,6 +190,7 @@ function App() {
       });
     } catch (e: any) {
       setDebugLogs((prev) => [...prev, `[TTS] ❌ ${e?.name || ''} ${e?.message || e}`]);
+      // ★エラー時も partnerLocaleCode を使用
       await speakDirect(t, currentStyle.partnerLocaleCode || 'en-US');
     } finally {
       window.clearTimeout(timeoutId);
@@ -716,19 +720,21 @@ function App() {
                         <div className="result-footer">
                           {/* メイン画面のボイス選択ドロップダウン */}
                           <select
-                              className="m3-input m3-select"
-                              style={{ flex: 1, minWidth: '150px' }}
-                              value={currentStyle?.voiceId || 'puck'}
-                              onChange={async (e) => {
-                                if (currentStyle && currentStyle.id) {
-                                  await db.styles.update(currentStyle.id, { voiceId: e.target.value });
-                                  setCurrentStyle(prev => prev ? { ...prev, voiceId: e.target.value } : null);
-                                }
-                              }}
-                            >
-                              {actingVoices.map(voice => (
-                                <option key={voice.id} value={voice.id}>{voice.displayName}</option>
-                              ))}
+                                  className="m3-input m3-select"
+                                  style={{ flex: 1, minWidth: '150px' }}
+                                  value={currentStyle?.voiceId || 'puck'} // ★ currentStyle?.voiceId を参照
+                                  onChange={async (e) => {
+                                    const newVoiceId = e.target.value;
+                                    if (currentStyle && currentStyle.id) {
+                                      // ★ DBを更新し、currentStyle を直接変更する
+                                      await db.styles.update(currentStyle.id, { voiceId: newVoiceId });
+                                      setCurrentStyle(prev => prev ? { ...prev, voiceId: newVoiceId } : null);
+                                    }
+                                  }}
+                                >
+                                  {actingVoices.map(voice => (
+                                    <option key={voice.id} value={voice.id}>{voice.displayName}</option>
+                                  ))}
                             </select>
 
                           {/* トグル＝エンジン切替（カード別） */}
@@ -876,7 +882,7 @@ function App() {
               <h2 style={{ margin: 0, fontSize: '1.4rem' }}>{getString('importSelectTitle')}</h2>
             </div>
 
-            <div className="dialog-body" style={{ padding: '0 24px', maxHeight: '50vh', overflowY: 'auto' }}>
+            <div className="dialog-body"> {/* overflow-x:hidden は CSSで対応 */}
               {importCandidates.map((candidate, idx) => (
                 <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 0', borderBottom: '1px solid #e0e0e0' }}>
                   <input
@@ -922,7 +928,7 @@ function App() {
               <h2 style={{ margin: 0, fontSize: '1.4rem' }}>{getString('settingsTitle')}</h2>
             </div>
 
-            <div className="dialog-body">
+            <div className="dialog-body"> {/* overflow-x:hidden は CSSで対応 */}
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                 <span>{getString('debugToggle')}</span>
                 <input type="checkbox" checked={showDebug} onChange={(e) => setShowDebug(e.target.checked)} style={{ transform: 'scale(1.5)' }} />
@@ -1033,4 +1039,4 @@ function App() {
   );
 }
 
-export default App;
+export default App; 
