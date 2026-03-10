@@ -316,8 +316,21 @@ body {
 .dialog-body { padding: 0 24px; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; flex: 1; }
 .dialog-footer { padding: 16px 24px 24px; display: flex; justify-content: flex-end; gap: 8px; }
 
-.m3-row { display: flex; gap: 16px; }
-.flex-1 { flex: 1; }
+.m3-row { 
+  display: flex; 
+  gap: 16px; 
+}
+.flex-1 { 
+  flex: 1; 
+}
+
+/* ▼ ここから追記：画面幅が600px以下のスマホの場合は縦積み（1行1項目）にする */
+@media (max-width: 600px) {
+  .m3-row {
+    flex-direction: column; /* 横並びを縦並びに変更 */
+    gap: 16px;              /* 縦に並んだ時の余白を確保 */
+  }
+}
 .m3-input-group { display: flex; flex-direction: column; gap: 4px; }
 .m3-input-group label { font-size: 0.75rem; color: #49454f; margin-left: 4px; font-weight: bold; }
 /* ドロップダウンを含む input/select の基本スタイル */
