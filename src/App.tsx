@@ -1,306 +1,976 @@
-import { useState, useCallback, useEffect } from 'react';
+// src/App.tsx
+import { useState, useCallback, useEffect, useRef, type ChangeEvent } from 'react';
 import { runTranslation, type TranslationResult } from './GeminiApi';
+import { speakWithGeminiTtsRest } from './GeminiTts';
 import { db, type ChatStylePreset, type ChatTurnEntity, type PhraseItem } from './db';
 import { getString } from './strings';
 import './App.css';
 
+type TtsStatus = 'idle' | 'loading' | 'playing';
+type TtsEngine = 'gemini' | 'device'; // device = speechSynthesis
+
 function App() {
   const [inputText, setInputText] = useState('');
-  const [logs, setLogs] = useState<string[]>([]);
+  const [isTranslating, setIsTranslating] = useState(false);
   const [isMeSpeaking, setIsMeSpeaking] = useState(true);
   const [apiKey] = useState(import.meta.env.VITE_GEMINI_API_KEY || '');
-  
-  const [streamingInput, setStreamingInput] = useState('');
-  const [streamingIsMe, setStreamingIsMe] = useState(true);
-  const [results, setResults] = useState<TranslationResult[]>([]);
-  const [history, setHistory] = useState<ChatTurnEntity[]>([]);
 
-  // --- スタイル管理・JSON入出力用 ---
-  const [showSettings, setShowSettings] = useState(false);
+  const [history, setHistory] = useState<ChatTurnEntity[]>([]);
+  const [streamingResults, setStreamingResults] = useState<TranslationResult[] | null>(null);
+  const [debugLogs, setDebugLogs] = useState<string[]>([]);
+  const debugBodyRef = useRef<HTMLPreElement | null>(null);
+
+  const [showDebug, setShowDebug] = useState(false);
   const [presets, setPresets] = useState<ChatStylePreset[]>([]);
   const [currentStyle, setCurrentStyle] = useState<ChatStylePreset | null>(null);
 
+  const [showSettingsDialog, setShowSettingsDialog] = useState(false);
+  const [showEditDialog, setShowEditDialog] = useState(false);
+  const [editingStyle, setEditingStyle] = useState<Partial<ChatStylePreset>>({});
+  const [isAddingNew, setIsAddingNew] = useState(false);
+
+  // インポート選択ダイアログ用
+  const [showImportDialog, setShowImportDialog] = useState(false);
+  const [importCandidates, setImportCandidates] = useState<any[]>([]);
+  const [importHistoryData, setImportHistoryData] = useState<any[]>([]);
+  const [importSelections, setImportSelections] = useState<boolean[]>([]);
+
+  // 音声認識（Web Speech API）
+  const recognitionRef = useRef<any>(null);
+  const [isListening, setIsListening] = useState(false);
+
+  // ----------------------------
+  // TTS: エンジン切替（カードごと）
+  // ----------------------------
+  const [ttsEngineByKey, setTtsEngineByKey] = useState<Record<string, TtsEngine>>({});
+  const getEngine = (key: string): TtsEngine => ttsEngineByKey[key] ?? 'gemini';
+  const setEngine = (key: string, engine: TtsEngine) =>
+    setTtsEngineByKey((prev) => ({ ...prev, [key]: engine }));
+
+  // ----------------------------
+  // TTS: 状態（カードごと表示）ただし同時再生はしない（別カード押したら切替）
+  // ----------------------------
+  const [ttsStatusByKey, setTtsStatusByKey] = useState<Record<string, TtsStatus>>({});
+  const getStatus = (key: string): TtsStatus => ttsStatusByKey[key] ?? 'idle';
+  const setStatus = (key: string, st: TtsStatus) =>
+    setTtsStatusByKey((prev) => ({ ...prev, [key]: st }));
+
+  const [activeTtsKey, setActiveTtsKey] = useState<string | null>(null);
+  const ttsAbortRef = useRef<AbortController | null>(null);
+
+  // ==========================================
+  // 共通ユーティリティ
+  // ==========================================
+  const copyText = async (text: string) => {
+    const t = (text || '').trim();
+    if (!t) return;
+    try {
+      await navigator.clipboard.writeText(t);
+    } catch {
+      const ta = document.createElement('textarea');
+      ta.value = t;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+    }
+  };
+
+  const voiceLabelMap: Record<string, string> = {
+    nova: 'Nova [女性・低音]',
+    shimmer: 'Shimmer [女性・高音]',
+    alloy: 'Alloy [女性・中音]',
+    puck: 'Puck [男性・低音]',
+    charon: 'Charon [男性・低音]'
+  };
+  const getVoiceLabel = (voiceId?: string) => {
+    const id = (voiceId || '').trim();
+    return voiceLabelMap[id] || id || 'Voice';
+  };
+
+  // speechSynthesis（端末TTS）
+  const speakDirect = (text: string, lang: string) => {
+    const t = (text || '').trim();
+    if (!t) return Promise.resolve();
+    if (!('speechSynthesis' in window)) return Promise.resolve();
+
+    return new Promise<void>((resolve) => {
+      try {
+        window.speechSynthesis.cancel();
+        const u = new SpeechSynthesisUtterance(t);
+        u.lang = lang;
+        u.onend = () => resolve();
+        u.onerror = () => resolve();
+        window.speechSynthesis.speak(u);
+      } catch {
+        resolve();
+      }
+    });
+  };
+
+  const stopAnyTts = () => {
+    try {
+      ttsAbortRef.current?.abort();
+    } catch {
+      // ignore
+    }
+    ttsAbortRef.current = null;
+
+    try {
+      window.speechSynthesis?.cancel();
+    } catch {
+      // ignore
+    }
+
+    if (activeTtsKey) setStatus(activeTtsKey, 'idle');
+    setActiveTtsKey(null);
+  };
+
+  // 「別カード押したら今の再生を止めて切替」
+  const playTts = async (key: string, text: string) => {
+    const t = (text || '').trim();
+    if (!t || !currentStyle) return;
+
+    const engine = getEngine(key);
+
+    // 他カードが再生中なら止める（切替）
+    if (activeTtsKey && activeTtsKey !== key) {
+      stopAnyTts();
+    }
+
+    // 同じカードが再生中/待機中なら「停止」
+    const st = getStatus(key);
+    if (activeTtsKey === key && st !== 'idle') {
+      stopAnyTts();
+      return;
+    }
+
+    setActiveTtsKey(key);
+
+    // 端末TTS
+    if (engine === 'device') {
+      setStatus(key, 'playing');
+      try {
+        await speakDirect(t, currentStyle.partnerLocaleCode || 'en-US');
+      } finally {
+        setStatus(key, 'idle');
+        setActiveTtsKey(null);
+      }
+      return;
+    }
+
+    // GeminiTTS
+    if (!apiKey) {
+      alert('APIキーが設定されていません。');
+      setStatus(key, 'idle');
+      setActiveTtsKey(null);
+      return;
+    }
+
+    const controller = new AbortController();
+    ttsAbortRef.current = controller;
+    setStatus(key, 'loading');
+
+    // タイムアウト（例：10秒）
+    const timeoutId = window.setTimeout(() => controller.abort(), 10000);
+
+    try {
+      const styleForTts = currentStyle.baseTone?.trim() || currentStyle.name;
+
+      await speakWithGeminiTtsRest({
+        apiKey,
+        text: t,
+        style: styleForTts,
+        voiceId: currentStyle.voiceId || 'puck',
+        signal: controller.signal,
+        callbacks: {
+          onLog: (m) => setDebugLogs((prev) => [...prev, `[TTS] ${m}`]),
+          onLoading: () => setStatus(key, 'loading'),
+          onPlaying: () => setStatus(key, 'playing'),
+          onDone: () => {},
+
+          // GeminiTTSが死んだら端末TTSで保険
+          onFallback: () => {
+            void speakDirect(t, currentStyle.partnerLocaleCode || 'en-US');
+          }
+        }
+      });
+    } catch (e: any) {
+      setDebugLogs((prev) => [...prev, `[TTS] ❌ ${e?.name || ''} ${e?.message || e}`]);
+      await speakDirect(t, currentStyle.partnerLocaleCode || 'en-US');
+    } finally {
+      window.clearTimeout(timeoutId);
+      ttsAbortRef.current = null;
+      setStatus(key, 'idle');
+      setActiveTtsKey(null);
+    }
+  };
+
+  // 音声認識
+  const startSpeechRecognition = () => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      alert('このブラウザは音声認識に対応していません（Chrome系推奨）。');
+      return;
+    }
+    if (!currentStyle) return;
+
+    const rec = new SpeechRecognition();
+    recognitionRef.current = rec;
+
+    rec.lang = isMeSpeaking ? currentStyle.myLocaleCode : currentStyle.partnerLocaleCode;
+    rec.interimResults = true;
+    rec.continuous = false;
+
+    rec.onstart = () => setIsListening(true);
+    rec.onend = () => setIsListening(false);
+    rec.onerror = () => setIsListening(false);
+
+    rec.onresult = (event: any) => {
+      let text = '';
+      for (let i = 0; i < event.results.length; i++) {
+        text += event.results[i][0].transcript;
+      }
+      setInputText(text.trim());
+    };
+
+    rec.start();
+  };
+
+  const stopSpeechRecognition = () => {
+    try {
+      recognitionRef.current?.stop();
+    } catch {
+      // ignore
+    }
+    setIsListening(false);
+  };
+
+  // デバッグ：末尾追従
+  useEffect(() => {
+    if (!showDebug) return;
+    const el = debugBodyRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, [debugLogs, showDebug]);
+
+  // ==========================================
+  // DB初期化と履歴読み込み
+  // ==========================================
   const initDB = useCallback(async () => {
     let allStyles = await db.styles.toArray();
-    // DBが空ならデフォルトのスタイルを1つ作成
     if (allStyles.length === 0) {
       const defaultStyle: ChatStylePreset = {
-        name: "青島 (デフォルト)",
-        myLang: "日本語", myLocaleCode: "ja-JP",
-        partnerLang: "中国語", partnerLocaleCode: "zh-CN",
-        baseTone: "自然で丁寧",
-        pattern1: "丁寧・フォーマル", pattern2: "カジュアル・親しい", pattern3: "",
-        myGender: "male", partnerGender: "female", relationship: "初対面", voiceId: "puck"
+        name: '青島 (デフォルト)',
+        myLang: '日本語',
+        myLocaleCode: 'ja-JP',
+        partnerLang: '中国語',
+        partnerLocaleCode: 'zh-CN',
+        baseTone: '丁寧',
+        pattern1: '自然な会話として翻訳してください。',
+        pattern2: '',
+        pattern3: '',
+        myGender: '',
+        partnerGender: '',
+        relationship: '',
+        voiceId: 'puck'
       };
       await db.styles.add(defaultStyle);
       allStyles = await db.styles.toArray();
     }
     setPresets(allStyles);
     setCurrentStyle(allStyles[0]);
+    if (allStyles[0]?.id) loadHistory(allStyles[0].id);
   }, []);
 
-  useEffect(() => { initDB(); }, [initDB]);
+  useEffect(() => {
+    initDB();
+  }, [initDB]);
 
   useEffect(() => {
     if (currentStyle?.id) loadHistory(currentStyle.id);
   }, [currentStyle]);
 
   const loadHistory = async (styleId: number) => {
-    const all = await db.history.toArray();
-    const filtered = all.filter(h => h.styleId === styleId).sort((a, b) => b.timestamp - a.timestamp);
-    setHistory(filtered);
+    const data = await db.history.where('styleId').equals(styleId).toArray();
+    const sorted = [...data].sort((a, b) => b.timestamp - a.timestamp);
+    setHistory(sorted);
   };
 
-  const addLog = useCallback((msg: string) => {
-    setLogs(prev => [`[${new Date().toLocaleTimeString()}] ${msg}`, ...prev].slice(0, 100));
-  }, []);
-
-  const clearInput = () => setInputText('');
-
-  // 💡 JSON書き出し
+  // ==========================================
+  // エクスポート / インポート
+  // ==========================================
   const handleExportJson = async () => {
-    const allStyles = await db.styles.toArray();
-    const blob = new Blob([JSON.stringify(allStyles, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'shabelink_styles.json';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  };
-
-  // 💡 JSON取り込み
-  const handleImportJson = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
     try {
-      const text = await file.text();
-      const json = JSON.parse(text) as ChatStylePreset[];
-      if (Array.isArray(json)) {
-        // IDの重複を避けるため、IDを削除して新規追加する
-        const toImport = json.map(({ id, ...rest }) => rest);
-        await db.styles.bulkAdd(toImport as any);
-        await initDB();
-        alert('スタイルをインポートしました！');
-      }
-    } catch (err: any) {
-      alert('読み込みエラー: ' + err.message);
+      const styles = await db.styles.toArray();
+      const historyData = await db.history.toArray();
+      const exportData = { styles, history: historyData };
+      const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `shabelink2_backup_${new Date().getTime()}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      alert('エクスポートに失敗しました。');
     }
   };
 
-  const handleTranslate = async () => {
-    if (!inputText || !apiKey || !currentStyle) return;
+  const handleImportJson = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
 
-    const currentInput = inputText;
-    const currentIsMe = isMeSpeaking;
-    setStreamingInput(currentInput);
-    setStreamingIsMe(currentIsMe);
-    setInputText('');
-
-    const activePatterns = [currentStyle.pattern1, currentStyle.pattern2, currentStyle.pattern3].filter(p => p && p.trim() !== '');
-    setResults(activePatterns.map(() => ({ trans: '', pron: '', intent: '', literal: '' })));
-
-    const tasks = activePatterns.map(async (pattern, index) => {
-      let finalRes: TranslationResult = { trans: '', pron: '', intent: '', literal: '' };
+    const reader = new FileReader();
+    reader.onload = async (event) => {
       try {
-        await runTranslation(apiKey, currentInput, currentStyle, currentIsMe, pattern, addLog, (res) => {
-          finalRes = res;
-          setResults(prev => { const next = [...prev]; next[index] = res; return next; });
+        const text = event.target?.result as string;
+        const json = JSON.parse(text);
+
+        const extractStyles = (obj: any): any[] => {
+          let found: any[] = [];
+          if (Array.isArray(obj)) {
+            if (obj.length > 0 && (obj[0].pattern1 !== undefined || obj[0].myLang !== undefined || obj[0].name !== undefined)) return obj;
+            obj.forEach((item) => (found = found.concat(extractStyles(item))));
+          } else if (obj && typeof obj === 'object') {
+            if (obj.pattern1 !== undefined || obj.myLang !== undefined || obj.name !== undefined) return [obj];
+            Object.keys(obj).forEach((key) => (found = found.concat(extractStyles(obj[key]))));
+          }
+          return found;
+        };
+
+        const extractHistory = (obj: any): any[] => {
+          let found: any[] = [];
+          if (Array.isArray(obj)) {
+            if (obj.length > 0 && obj[0].input !== undefined) return obj;
+            obj.forEach((item) => (found = found.concat(extractHistory(item))));
+          } else if (obj && typeof obj === 'object') {
+            if (obj.input !== undefined) return [obj];
+            Object.keys(obj).forEach((key) => (found = found.concat(extractHistory(obj[key]))));
+          }
+          return found;
+        };
+
+        const extractedStyles = extractStyles(json);
+        const extractedHistory = extractHistory(json);
+
+        if (extractedStyles.length === 0) {
+          alert('⚠️ インポート可能なスタイルデータが見つかりませんでした。');
+          return;
+        }
+
+        const existingStyles = await db.styles.toArray();
+        const existingStyleMap = new Map<string, number>();
+        existingStyles.forEach((s) => existingStyleMap.set(s.name, s.id!));
+
+        const candidates = extractedStyles.map((oldStyle) => {
+          const styleName = oldStyle.name || oldStyle.styleName || 'インポートされたスタイル';
+          const isOverwrite = existingStyleMap.has(styleName);
+
+          const parsedStyle: ChatStylePreset = {
+            name: styleName,
+            myLang: oldStyle.myLang || '日本語',
+            myLocaleCode: oldStyle.myLocaleCode || 'ja-JP',
+            partnerLang: oldStyle.partnerLang || '中国語',
+            partnerLocaleCode: oldStyle.partnerLocaleCode || 'zh-CN',
+            myGender: oldStyle.myGender || '',
+            partnerGender: oldStyle.partnerGender || '',
+            relationship: oldStyle.relationship || '',
+            baseTone: oldStyle.baseTone || '',
+            pattern1: oldStyle.pattern1 || oldStyle.pattern || '自然な会話として翻訳してください。',
+            pattern2: oldStyle.pattern2 || '',
+            pattern3: oldStyle.pattern3 || '',
+            voiceId: oldStyle.voiceId || 'puck'
+          };
+
+          return {
+            originalOldId: oldStyle.id,
+            parsedStyle,
+            isOverwrite,
+            existingId: isOverwrite ? existingStyleMap.get(styleName) : undefined
+          };
         });
-      } catch (e: any) { addLog(`❌ Error: ${e.message}`); }
-      return finalRes;
-    });
-    
-    const finalResults = await Promise.all(tasks);
 
-    const suggestions: PhraseItem[] = finalResults.map(res => {
-      const parts = [];
-      if (res.partnerMsg && !currentIsMe) parts.push(`${getString('label_partner_msg')} ${res.partnerMsg}`);
-      if (res.intent) parts.push(`${getString('label_intent')} ${res.intent}`);
-      if (res.literal) parts.push(`${getString('label_literal')} ${res.literal}`);
-      return { original: parts.join('\n'), pronunciation: res.pron, translated: res.trans };
-    });
+        setImportCandidates(candidates);
+        setImportHistoryData(extractedHistory);
+        setImportSelections(new Array(candidates.length).fill(true));
 
-    try {
-      await db.history.add({
-        styleId: currentStyle.id || 1,
-        input: currentInput,
-        isMe: currentIsMe,
-        suggestions: suggestions,
-        timestamp: Date.now()
-      });
-    } catch (err: any) { addLog(`❌ DB Error: ${err.message}`); }
+        setShowSettingsDialog(false);
+        setShowImportDialog(true);
+      } catch (error) {
+        console.error('Import Error:', error);
+        alert('❌ インポートに失敗しました。ファイルが破損しているか、JSON形式ではありません。');
+      }
+    };
 
-    setStreamingInput('');
-    setResults([]);
-    loadHistory(currentStyle.id!);
+    reader.readAsText(file);
+    e.target.value = '';
   };
 
-  if (!currentStyle) return <div>Loading...</div>;
+  const executeImport = async () => {
+    try {
+      const styleIdMap = new Map<number, number>();
+      let importedStylesCount = 0;
 
+      for (let i = 0; i < importCandidates.length; i++) {
+        if (!importSelections[i]) continue;
+
+        const candidate = importCandidates[i];
+        let finalStyleId: number;
+
+        if (candidate.isOverwrite && candidate.existingId) {
+          finalStyleId = candidate.existingId;
+          await db.styles.update(finalStyleId, candidate.parsedStyle);
+        } else {
+          finalStyleId = (await db.styles.add(candidate.parsedStyle)) as number;
+        }
+
+        if (candidate.originalOldId !== undefined) styleIdMap.set(candidate.originalOldId, finalStyleId);
+        importedStylesCount++;
+      }
+
+      let importedHistoryCount = 0;
+      for (const h of importHistoryData) {
+        const newHistoryId = h.styleId !== undefined && styleIdMap.has(h.styleId) ? styleIdMap.get(h.styleId) : undefined;
+        if (newHistoryId !== undefined) {
+          const newTurn: ChatTurnEntity = {
+            styleId: newHistoryId,
+            input: h.input || '',
+            isMe: h.isMe !== undefined ? h.isMe : true,
+            suggestions: h.suggestions || [],
+            timestamp: h.timestamp || Date.now()
+          };
+          await db.history.add(newTurn);
+          importedHistoryCount++;
+        }
+      }
+
+      const allStyles = await db.styles.toArray();
+      setPresets([...allStyles]);
+      if (allStyles.length > 0) {
+        const lastStyle = allStyles[allStyles.length - 1];
+        setCurrentStyle(lastStyle);
+        loadHistory(lastStyle.id!);
+      }
+
+      setShowImportDialog(false);
+      alert(`✅ インポート完了\n${importedStylesCount}件のスタイルと ${importedHistoryCount}件の履歴を反映しました。`);
+    } catch (e) {
+      alert('インポート実行中にエラーが発生しました。');
+      console.error(e);
+    }
+  };
+
+  // ==========================================
+  // 翻訳実行
+  // ==========================================
+  const handleTranslate = async () => {
+    if (!inputText.trim() || !currentStyle || !currentStyle.id) return;
+
+    setIsTranslating(true);
+    setDebugLogs([]);
+
+    if (!apiKey) {
+      alert('APIキーが設定されていません。(.envファイルを確認してください)');
+      setIsTranslating(false);
+      return;
+    }
+
+    const activePatterns = [currentStyle.pattern1, currentStyle.pattern2, currentStyle.pattern3]
+      .map((p) => p?.trim())
+      .filter((p) => p && p.length > 0) as string[];
+
+    if (activePatterns.length === 0) {
+      alert('パターンが1つも設定されていません。スタイル編集からパターンを入力してください。');
+      setIsTranslating(false);
+      return;
+    }
+
+    setStreamingResults(
+      activePatterns.map(
+        (): TranslationResult => ({ trans: '', pron: '', intent: '', literal: '', partnerMsg: '' })
+      )
+    );
+
+    try {
+      const translationPromises: Promise<TranslationResult | null>[] = activePatterns.map(async (pattern, index) => {
+        let finalRes: TranslationResult | null = null;
+
+        await runTranslation(
+          apiKey,
+          inputText,
+          currentStyle,
+          isMeSpeaking,
+          pattern,
+          (logMsg: string) => setDebugLogs((prev) => [...prev, `[Pattern ${index + 1}] ${logMsg}`]),
+          (res: TranslationResult) => {
+            setStreamingResults((prev) => {
+              if (!prev) return prev;
+              const newArr = [...prev];
+              newArr[index] = { ...res };
+              return newArr;
+            });
+            finalRes = res;
+          }
+        );
+
+        return finalRes;
+      });
+
+      const results = await Promise.all(translationPromises);
+
+      const newSuggestions: PhraseItem[] = results.map((res: TranslationResult | null) => {
+        if (!res) return { original: '', pronunciation: '', translated: '(エラー)' };
+
+        const combinedDetailsForSave = [
+          !isMeSpeaking && res.partnerMsg ? `【${getString('partnerMsgLabel')}】 ${res.partnerMsg}` : null,
+          res.intent ? `【${getString('intent')}】 ${res.intent}` : null,
+          res.literal ? `【${getString('literal')}】 ${res.literal}` : null
+        ]
+          .filter(Boolean)
+          .join('\n');
+
+        return {
+          original: combinedDetailsForSave,
+          pronunciation: res.pron || '',
+          translated: res.trans || getString('noTranslation'),
+          intent: res.intent || '',
+          literal: res.literal || '',
+          partnerMsg: res.partnerMsg || ''
+        };
+      });
+
+      const newTurn: ChatTurnEntity = {
+        styleId: currentStyle.id!,
+        input: inputText,
+        isMe: isMeSpeaking,
+        suggestions: newSuggestions,
+        timestamp: Date.now()
+      };
+
+      await db.history.add(newTurn);
+      await loadHistory(currentStyle.id!);
+
+      setInputText('');
+      setStreamingResults(null);
+    } catch (e: any) {
+      console.error('Translation Error:', e);
+      alert('翻訳中にエラーが発生しました。\n' + (e.message || ''));
+      setDebugLogs((prev) => [...prev, `❌ Error: ${e.message}`]);
+      setStreamingResults(null);
+    } finally {
+      setIsTranslating(false);
+    }
+  };
+
+  // ==========================================
+  // スタイル保存・削除・履歴削除
+  // ==========================================
+  const handleSaveStyle = async () => {
+    if (!editingStyle.name || !editingStyle.pattern1) {
+      alert('スタイル名とパターン1は必須です。');
+      return;
+    }
+    let savedId = editingStyle.id;
+    if (!isAddingNew && editingStyle.id) {
+      await db.styles.update(editingStyle.id, editingStyle as ChatStylePreset);
+    } else {
+      const newStyle = { ...editingStyle };
+      delete (newStyle as any).id;
+      savedId = (await db.styles.add(newStyle as ChatStylePreset)) as number;
+    }
+    const allStyles = await db.styles.toArray();
+    setPresets(allStyles);
+    setShowEditDialog(false);
+    if (isAddingNew || editingStyle.id === currentStyle?.id) {
+      setCurrentStyle(allStyles.find((s) => s.id === savedId) || allStyles[0]);
+    }
+  };
+
+  const handleDeleteStyle = async (id: number) => {
+    if (window.confirm('本当にこのスタイルを削除しますか？')) {
+      await db.styles.delete(id);
+      await db.history.where('styleId').equals(id).delete();
+      const allStyles = await db.styles.toArray();
+      setPresets(allStyles);
+      if (currentStyle?.id === id) {
+        setCurrentStyle(allStyles.length > 0 ? allStyles[0] : null);
+      }
+    }
+  };
+
+  const handleDeleteHistory = async () => {
+    if (window.confirm('全チャット履歴を削除しますか？')) {
+      if (currentStyle?.id) {
+        await db.history.where('styleId').equals(currentStyle.id).delete();
+        setHistory([]);
+        alert('このスタイルの履歴を削除しました。');
+      }
+    }
+  };
+
+  // ==========================================
+  // UI
+  // ==========================================
   return (
     <div className="app-container">
-      <header className="top-bar">
-        <h1>Shabelink2</h1>
-        <button 
-  className="icon-btn" 
-  onClick={() => {
-    console.log("⚙️ 歯車ボタンがクリックされました！ showSettingsをtrueにします");
-    setShowSettings(true);
-  }}
->
-  ⚙️
-</button>
-      </header>
+      <div className="top-bar">
+        <div className="top-bar-header">
+          <h1>Shabelink2</h1>
+          <button className="icon-btn" onClick={() => setShowSettingsDialog(true)} type="button">⚙️</button>
+        </div>
 
-      <div className="scrollable-content">
-        <section className="style-section">
-          <div className="section-label">スタイル・方言設定</div>
-          <div className="style-controls">
-            <div className="style-dropdown" onClick={() => setShowSettings(true)}>
-              <span>{currentStyle.name}</span>
-              <span className="dropdown-arrow">▼</span>
-            </div>
-            <div className="style-actions">
-              <button className="icon-btn" onClick={() => setShowSettings(true)}>✏️</button>
-            </div>
-          </div>
-          <div className="lang-pair">
-            {currentStyle.myLang} [{currentStyle.myLocaleCode}] ⇄ {currentStyle.partnerLang} [{currentStyle.partnerLocaleCode}]
-          </div>
-        </section>
-
-        <section className="role-toggle-section">
-          <span className={`role-label ${!isMeSpeaking ? 'active' : ''}`}>{getString('label_role_partner')}</span>
-          {/* トグルスイッチ */}
-          <div 
-            className={`toggle-switch ${isMeSpeaking ? 'me' : 'partner'}`} 
-            onClick={() => {
-              console.log(`🔄 話者切り替え！ 現在: ${isMeSpeaking ? '自分' : '相手'} -> 変更後: ${!isMeSpeaking ? '自分' : '相手'}`);
-              setIsMeSpeaking(!isMeSpeaking);
+        <div className="style-controls-row">
+          <select
+            className="m3-input m3-select"
+            style={{ flex: 1, margin: 0, padding: '8px 32px 8px 12px', background: '#f0edf5', border: 'none', fontWeight: 'bold' }}
+            value={currentStyle?.id || ''}
+            onChange={(e) => {
+              const selectedId = Number(e.target.value);
+              const selected = presets.find((p) => p.id === selectedId);
+              if (selected) setCurrentStyle(selected);
             }}
           >
-            <div className="toggle-thumb" />
-          </div>
-          <span className={`role-label ${isMeSpeaking ? 'active' : ''}`}>{getString('label_role_me')}</span>
-        </section>
+            {presets.map((preset) => <option key={preset.id} value={preset.id}>{preset.name}</option>)}
+          </select>
 
-        {/* 💡 isMeSpeaking で me / partner クラスが切り替わり、色が変わります */}
-        <section className="input-section">
-          <div className={`textarea-container ${isMeSpeaking ? 'me' : 'partner'}`}>
-            <textarea 
-              value={inputText} 
-              onChange={(e) => setInputText(e.target.value)} 
-              placeholder={`${isMeSpeaking ? currentStyle.myLang : currentStyle.partnerLang} で入力してください...`}
-            />
-            <span className="mic-icon">🎤</span>
-          </div>
-          
-          <div className="input-tools">
-            <button className="clear-btn" onClick={clearInput}>✕ 入力クリア</button>
-            <div className="stt-toggles">
-              <span className="stt-label">音声認識:</span>
-              <button className="stt-btn active">端末 (高速)</button>
-              <button className="stt-btn">AI (高精度)</button>
+          <button
+            className="icon-btn action-btn"
+            onClick={() => { setIsAddingNew(true); setEditingStyle({ myLang: '日本語', myLocaleCode: 'ja-JP', partnerLang: '中国語', partnerLocaleCode: 'zh-CN', voiceId: 'puck' }); setShowEditDialog(true); }}
+            type="button"
+          >➕</button>
+
+          <button
+            className="icon-btn action-btn"
+            onClick={() => { if (currentStyle) { setIsAddingNew(false); setEditingStyle(currentStyle); setShowEditDialog(true); } }}
+            type="button"
+          >✏️</button>
+
+          <button className="icon-btn action-btn" onClick={() => currentStyle?.id && handleDeleteStyle(currentStyle.id)} type="button">🗑️</button>
+        </div>
+      </div>
+
+      <div className="scrollable-content">
+        <div className="role-toggle-section">
+            {/* 左：相手が話す */}
+            <span className={`role-label ${!isMeSpeaking ? 'active' : ''}`}>
+              {getString('partnerSpeaking')}
+            </span>
+
+            <div
+              className={`toggle-switch ${isMeSpeaking ? 'me' : 'partner'}`}
+              onClick={() => !isTranslating && setIsMeSpeaking(!isMeSpeaking)}
+            >
+              <div className="toggle-thumb" />
             </div>
-          </div>
-        </section>
 
-        <button className="main-translate-btn" onClick={handleTranslate} disabled={!inputText}>
-          {getString('label_send')}
-        </button>
+            {/* 右：自分が話す */}
+            <span className={`role-label ${isMeSpeaking ? 'active' : ''}`}>
+              {getString('meSpeaking')}
+            </span>
+        </div>
 
-        <section className="results-area">
-          {streamingInput && (
-            <div className="history-turn">
-              <div style={{ background: streamingIsMe ? '#e8f4f8' : '#e8f5e9', padding: '12px 16px', borderRadius: '12px', marginBottom: '12px', fontWeight: 'bold' }}>
-                {streamingIsMe ? '自分' : '相手'}: {streamingInput}
+
+        <div className={`textarea-container ${isMeSpeaking ? 'me' : 'partner'}`}>
+          <textarea
+            placeholder={getString('inputPlaceholder')}
+            value={inputText}
+            onChange={(e) => setInputText(e.target.value)}
+            disabled={isTranslating}
+          />
+        </div>
+
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="main-translate-btn" onClick={handleTranslate} disabled={!inputText || isTranslating} style={{ flex: 1 }} type="button">
+            {isTranslating ? getString('translating') : getString('translateBtn')}
+          </button>
+
+          <button
+            className="m3-filled-btn"
+            style={{ width: 120, background: isListening ? '#ffebee' : '#f0edf5', color: '#111' }}
+            onClick={isListening ? stopSpeechRecognition : startSpeechRecognition}
+            disabled={isTranslating || !currentStyle}
+            type="button"
+          >
+            {isListening ? '🎙️停止' : '🎙️入力'}
+          </button>
+        </div>
+
+        <div className="history-area">
+          {/* Streaming */}
+          {isTranslating && streamingResults && (
+            <div className={`turn-block ${isMeSpeaking ? 'me' : 'partner'}`}>
+              <div className={`bubble input-bubble ${isMeSpeaking ? 'me' : 'partner'}`}>
+                {(isMeSpeaking ? getString('mePrefix') : getString('partnerPrefix')) + inputText}
               </div>
-              {results.map((res, i) => (
-                <div key={i} className="md3-card" style={{ marginBottom: '16px' }}>
-                  <div className="card-badge">PATTERN {i + 1}</div>
-                  <div className="card-trans">{res.trans || getString('label_generating')}</div>
-                  {res.pron && <div className="card-pron">{res.pron}</div>}
-                  {(res.partnerMsg || res.intent || res.literal) && (
-                    <div className="card-details">
-                      {res.partnerMsg && <div className="detail-line"><span className="detail-label">{getString('label_partner_msg')}</span> {res.partnerMsg}</div>}
-                      {res.intent && <div className="detail-line"><span className="detail-label">{getString('label_intent')}</span> {res.intent}</div>}
-                      {res.literal && <div className="detail-line literal-line"><span className="detail-label">{getString('label_literal')}</span> {res.literal}</div>}
-                    </div>
-                  )}
+
+              <div className={`bubble ai-bubble ${isMeSpeaking ? 'me' : 'partner'} streaming-card`}>
+                <div className="suggestions-list">
+                  {streamingResults.map((r: TranslationResult, idx: number) => {
+                    const ttsKey = `stream-${idx}`;
+                    const st = getStatus(ttsKey);
+                    const engine = getEngine(ttsKey);
+
+                    return (
+                      <div key={idx} className="rich-result-container">
+                        {streamingResults.length > 1 && <div className="pattern-label">{getString('pattern')} {idx + 1}</div>}
+
+                        {!isMeSpeaking && r.partnerMsg && <div className="res-details">【{getString('partnerMsgLabel')}】 {r.partnerMsg}</div>}
+                        {r.intent && <div className="res-details">【{getString('intent')}】 {r.intent}</div>}
+                        {r.literal && <div className="res-details">【{getString('literal')}】 {r.literal}</div>}
+                        {r.pron && <div className="res-pron">【{getString('pron')}】 {r.pron}</div>}
+                        {r.trans && r.trans !== getString('noTranslation') && <div className="res-trans">{r.trans}</div>}
+
+                        <div className="result-footer">
+                          <div className="voice-label">{getVoiceLabel(currentStyle?.voiceId)}</div>
+
+                          <label className="auto-speak" title={engine === 'gemini' ? getString('ttsAiTitle') : getString('ttsDeviceTitle')}>
+                            <input
+                              type="checkbox"
+                              checked={engine === 'gemini'}
+                              onChange={(e) => setEngine(ttsKey, e.target.checked ? 'gemini' : 'device')}
+                            />
+                            <span className="auto-speak-ui" />
+                          </label>
+
+                          <span className="tts-engine-label">
+                            {engine === 'gemini' ? getString('ttsAi') : getString('ttsDevice')}
+                          </span>
+
+                          <div className="footer-actions">
+                            <button className="mini-icon-btn" onClick={() => copyText(r.trans || '')} type="button">📋</button>
+
+                            <button
+                              className={`mini-icon-btn ${st === 'playing' ? 'speaking' : ''}`}
+                              onClick={() => playTts(ttsKey, r.trans || '')}
+                              type="button"
+                              title={
+                                st === 'loading' ? getString('ttsLoading')
+                                : st !== 'idle' ? getString('ttsStop')
+                                : getString('ttsPlay')
+                              }
+                            >
+                              <span className="speaker-icon">🔊</span>
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
-              ))}
+              </div>
             </div>
           )}
 
-          {history.map(turn => (
-            <div key={turn.id} className="history-turn" style={{ marginTop: '12px', borderTop: '2px dashed #eee', paddingTop: '16px' }}>
-              <div style={{ background: turn.isMe ? '#e8f4f8' : '#e8f5e9', padding: '12px 16px', borderRadius: '12px', marginBottom: '12px', fontWeight: 'bold', color: '#1a1a1a' }}>
-                {turn.isMe ? '自分' : '相手'}: {turn.input}
+          {/* Saved History */}
+          {history.map((turn) => (
+            <div key={turn.id} className={`turn-block ${turn.isMe ? 'me' : 'partner'}`}>
+              <div className={`bubble input-bubble ${turn.isMe ? 'me' : 'partner'}`}>
+                {(turn.isMe ? getString('mePrefix') : getString('partnerPrefix')) + turn.input}
               </div>
-              {turn.suggestions.map((sug, i) => (
-                <div key={i} className="md3-card" style={{ marginBottom: '16px' }}>
-                  <div className="card-badge">PATTERN {i + 1}</div>
-                  <div className="card-trans">{sug.translated}</div>
-                  {sug.pronunciation && <div className="card-pron">{sug.pronunciation}</div>}
-                  {sug.original && (
-                    <div className="card-details">
-                      {sug.original.split('\n').map((line, j) => (
-                        <div key={j} className="detail-line">{line}</div>
-                      ))}
-                    </div>
+
+              <div className={`bubble ai-bubble ${turn.isMe ? 'me' : 'partner'}`}>
+                <div className="suggestions-list">
+                  {turn.suggestions.map((s, idx) => {
+                    const ttsKey = `turn-${String(turn.id)}-${idx}`;
+                    const st = getStatus(ttsKey);
+                    const engine = getEngine(ttsKey);
+
+                    const legacyDetails =
+                      s.original && s.original.trim().length > 0 && s.original !== turn.input ? s.original : '';
+
+                    return (
+                      <div key={idx} className="rich-result-container">
+                        {turn.suggestions.length > 1 && <div className="pattern-label">{getString('pattern')} {idx + 1}</div>}
+
+                        {!turn.isMe && s.partnerMsg && <div className="res-details">【{getString('partnerMsgLabel')}】 {s.partnerMsg}</div>}
+                        {s.intent && <div className="res-details">【{getString('intent')}】 {s.intent}</div>}
+                        {s.literal && <div className="res-details">【{getString('literal')}】 {s.literal}</div>}
+
+                        {!s.intent && !s.literal && !s.partnerMsg && legacyDetails && (
+                          <div className="res-details">{legacyDetails}</div>
+                        )}
+
+                        {s.pronunciation && <div className="res-pron">【{getString('pron')}】 {s.pronunciation}</div>}
+                        {s.translated && s.translated !== getString('noTranslation') && <div className="res-trans">{s.translated}</div>}
+
+                        <div className="result-footer">
+                          <div className="voice-label">{getVoiceLabel(currentStyle?.voiceId)}</div>
+
+                          <label className="auto-speak" title={engine === 'gemini' ? getString('ttsAiTitle') : getString('ttsDeviceTitle')}>
+                            <input
+                              type="checkbox"
+                              checked={engine === 'gemini'}
+                              onChange={(e) => setEngine(ttsKey, e.target.checked ? 'gemini' : 'device')}
+                            />
+                            <span className="auto-speak-ui" />
+                          </label>
+
+                          <span className="tts-engine-label">
+                            {engine === 'gemini' ? getString('ttsAi') : getString('ttsDevice')}
+                          </span>
+
+                          <div className="footer-actions">
+                            <button className="mini-icon-btn" onClick={() => copyText(s.translated || '')} type="button">📋</button>
+
+                            <button
+                              className={`mini-icon-btn ${st === 'playing' ? 'speaking' : ''}`}
+                              onClick={() => playTts(ttsKey, s.translated || '')}
+                              type="button"
+                              title={
+                                st === 'loading' ? getString('ttsLoading')
+                                : st !== 'idle' ? getString('ttsStop')
+                                : getString('ttsPlay')
+                              }
+                            >
+                              <span className="speaker-icon">🔊</span>
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Debug overlay */}
+      {showDebug && debugLogs.length > 0 && (
+        <div className="debug-console">
+          <div className="debug-header">Debug Info</div>
+          <pre ref={debugBodyRef} className="debug-body">{debugLogs.join('\n')}</pre>
+        </div>
+      )}
+
+      {/* インポート選択ダイアログ */}
+      {showImportDialog && (
+        <div className="modal-overlay" onClick={() => setShowImportDialog(false)}>
+          <div className="modal-content m3-dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="dialog-header">
+              <h2 style={{ margin: 0, fontSize: '1.4rem' }}>{getString('importSelectTitle')}</h2>
+            </div>
+
+            <div className="dialog-body" style={{ padding: '0 24px', maxHeight: '50vh', overflowY: 'auto' }}>
+              {importCandidates.map((candidate, idx) => (
+                <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 0', borderBottom: '1px solid #e0e0e0' }}>
+                  <input
+                    type="checkbox"
+                    style={{ transform: 'scale(1.5)', cursor: 'pointer' }}
+                    checked={importSelections[idx]}
+                    onChange={(e) => {
+                      const newSelections = [...importSelections];
+                      newSelections[idx] = e.target.checked;
+                      setImportSelections(newSelections);
+                    }}
+                  />
+                  <div style={{ flex: 1, fontSize: '1rem', fontWeight: 'bold', color: '#333' }}>
+                    {candidate.parsedStyle.name}
+                  </div>
+
+                  {candidate.isOverwrite ? (
+                    <span style={{ backgroundColor: '#ffebee', color: '#c62828', padding: '4px 8px', borderRadius: '4px', fontSize: '0.8rem', fontWeight: 'bold', whiteSpace: 'nowrap' }}>
+                      {getString('overwriteBadge')}
+                    </span>
+                  ) : (
+                    <span style={{ backgroundColor: '#e8f5e9', color: '#2e7d32', padding: '4px 8px', borderRadius: '4px', fontSize: '0.8rem', fontWeight: 'bold', whiteSpace: 'nowrap' }}>
+                      {getString('addNewBadge')}
+                    </span>
                   )}
                 </div>
               ))}
             </div>
-          ))}
-        </section>
 
-        {/* デバッグログ（非表示・削除禁止エリア） */}
-        <details className="debug-collapsible" style={{ marginTop: '20px', padding: '10px', background: '#f0f0f0', borderRadius: '8px' }}>
-          <summary style={{ cursor: 'pointer', fontSize: '0.8rem', color: '#555' }}>Debug Log (Click to view)</summary>
-          <div className="debug-content" style={{ maxHeight: '200px', overflowY: 'auto', background: '#222', color: '#0f0', padding: '10px', fontSize: '0.75rem', marginTop: '10px' }}>
-            {logs.map((log, i) => <div key={i} className="log-line">{log}</div>)}
+            <div className="dialog-footer">
+              <button onClick={() => setShowImportDialog(false)} className="m3-text-btn" type="button">{getString('cancelBtn')}</button>
+              <button onClick={executeImport} className="m3-filled-btn" type="button">{getString('importExecuteBtn')}</button>
+            </div>
           </div>
-        </details>
-      </div>
+        </div>
+      )}
 
-      {/* --- 設定・JSON入出力モーダル --- */}
-      {showSettings && (
-        <div className="modal-overlay" onClick={() => setShowSettings(false)}>
-          <div className="modal-content" onClick={e => e.stopPropagation()}>
-            <div className="modal-header">設定 / スタイル管理</div>
-            
-            <div className="settings-actions">
-              <button className="settings-btn" onClick={handleExportJson}>ファイルへ保存</button>
-              <label className="upload-btn">
-                ファイルから追加
-                <input type="file" accept=".json" onChange={handleImportJson} />
-              </label>
+      {/* 設定ダイアログ */}
+      {showSettingsDialog && (
+        <div className="modal-overlay" onClick={() => setShowSettingsDialog(false)}>
+          <div className="modal-content m3-dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="dialog-header">
+              <h2 style={{ margin: 0, fontSize: '1.4rem' }}>{getString('settingsTitle')}</h2>
             </div>
 
-            <div style={{ fontWeight: 'bold', marginTop: '10px' }}>保存済みのスタイル</div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {presets.map(preset => (
-                <div key={preset.id} className="style-list-item">
-                  <span>{preset.name}</span>
-                  <button 
-                    className="settings-btn" 
-                    style={{ flex: 'none', padding: '6px 12px' }}
-                    onClick={() => {
-                      setCurrentStyle(preset);
-                      setShowSettings(false);
-                    }}
-                  >
-                    選択
-                  </button>
-                </div>
-              ))}
+            <div className="dialog-body">
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span>{getString('debugToggle')}</span>
+                <input type="checkbox" checked={showDebug} onChange={(e) => setShowDebug(e.target.checked)} style={{ transform: 'scale(1.5)' }} />
+              </div>
+
+              <div style={{ display: 'flex', gap: '12px', marginTop: '16px' }}>
+                <button className="m3-filled-btn" style={{ flex: 1, background: '#f0edf5', color: '#111' }} onClick={handleExportJson} type="button">
+                  {getString('exportBtn')}
+                </button>
+                <label className="m3-filled-btn" style={{ flex: 1, background: '#f0edf5', color: '#111', textAlign: 'center', cursor: 'pointer' }}>
+                  {getString('importBtn')}
+                  <input type="file" accept=".json" style={{ display: 'none' }} onChange={handleImportJson} />
+                </label>
+              </div>
+
+              <button onClick={handleDeleteHistory} className="m3-filled-btn" style={{ marginTop: '16px', background: '#ffebee', color: '#c62828', width: '100%' }} type="button">
+                {getString('deleteHistoryBtn')}
+              </button>
             </div>
 
-            <button className="close-modal-btn" onClick={() => setShowSettings(false)}>閉じる</button>
+            <div className="dialog-footer">
+              <button onClick={() => setShowSettingsDialog(false)} className="m3-text-btn" type="button">{getString('closeBtn')}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* スタイル編集ダイアログ */}
+      {showEditDialog && (
+        <div className="modal-overlay" onClick={() => setShowEditDialog(false)}>
+          <div className="modal-content m3-dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="dialog-header">
+              <h2 style={{ margin: 0, fontSize: '1.4rem' }}>{isAddingNew ? getString('styleNew') : getString('styleEdit')}</h2>
+            </div>
+
+            <div className="dialog-body">
+              <div className="m3-input-group"><label>{getString('styleName')}</label><input className="m3-input" value={editingStyle.name || ''} onChange={(e) => setEditingStyle({ ...editingStyle, name: e.target.value })} /></div>
+              <div className="m3-row">
+                <div className="m3-input-group flex-1"><label>{getString('myLang')}</label><input className="m3-input" value={editingStyle.myLang || ''} onChange={(e) => setEditingStyle({ ...editingStyle, myLang: e.target.value })} /></div>
+                <div className="m3-input-group flex-1"><label>{getString('myLocale')}</label><input className="m3-input" value={editingStyle.myLocaleCode || ''} onChange={(e) => setEditingStyle({ ...editingStyle, myLocaleCode: e.target.value })} /></div>
+              </div>
+              <div className="m3-row">
+                <div className="m3-input-group flex-1"><label>{getString('partnerLang')}</label><input className="m3-input" value={editingStyle.partnerLang || ''} onChange={(e) => setEditingStyle({ ...editingStyle, partnerLang: e.target.value })} /></div>
+                <div className="m3-input-group flex-1"><label>{getString('partnerLocale')}</label><input className="m3-input" value={editingStyle.partnerLocaleCode || ''} onChange={(e) => setEditingStyle({ ...editingStyle, partnerLocaleCode: e.target.value })} /></div>
+              </div>
+              <div className="m3-row">
+                <div className="m3-input-group flex-1"><label>{getString('myGender')}</label><input className="m3-input" value={editingStyle.myGender || ''} onChange={(e) => setEditingStyle({ ...editingStyle, myGender: e.target.value })} /></div>
+                <div className="m3-input-group flex-1"><label>{getString('partnerGender')}</label><input className="m3-input" value={editingStyle.partnerGender || ''} onChange={(e) => setEditingStyle({ ...editingStyle, partnerGender: e.target.value })} /></div>
+              </div>
+              <div className="m3-input-group"><label>{getString('relationship')}</label><input className="m3-input" value={editingStyle.relationship || ''} onChange={(e) => setEditingStyle({ ...editingStyle, relationship: e.target.value })} /></div>
+              <div className="m3-input-group"><label>{getString('baseTone')}</label><input className="m3-input" value={editingStyle.baseTone || ''} onChange={(e) => setEditingStyle({ ...editingStyle, baseTone: e.target.value })} /></div>
+
+              <div className="m3-input-group"><label>{getString('voiceId')}</label>
+                <select className="m3-input m3-select" value={editingStyle.voiceId || 'puck'} onChange={(e) => setEditingStyle({ ...editingStyle, voiceId: e.target.value })}>
+                  <option value="nova">Nova [女性・低音]</option>
+                  <option value="shimmer">Shimmer [女性・高音]</option>
+                  <option value="alloy">Alloy [女性・中音]</option>
+                  <option value="puck">Puck [男性・低音]</option>
+                  <option value="charon">Charon [男性・低音]</option>
+                </select>
+              </div>
+
+              <div className="m3-input-group"><label>{getString('pattern1')}</label><textarea className="m3-input" style={{ minHeight: '80px' }} value={editingStyle.pattern1 || ''} onChange={(e) => setEditingStyle({ ...editingStyle, pattern1: e.target.value })} /></div>
+              <div className="m3-input-group"><label>{getString('pattern2')}</label><textarea className="m3-input" style={{ minHeight: '60px' }} value={editingStyle.pattern2 || ''} onChange={(e) => setEditingStyle({ ...editingStyle, pattern2: e.target.value })} /></div>
+              <div className="m3-input-group"><label>{getString('pattern3')}</label><textarea className="m3-input" style={{ minHeight: '60px' }} value={editingStyle.pattern3 || ''} onChange={(e) => setEditingStyle({ ...editingStyle, pattern3: e.target.value })} /></div>
+            </div>
+
+            <div className="dialog-footer">
+              <button onClick={() => setShowEditDialog(false)} className="m3-text-btn" type="button">{getString('cancelBtn')}</button>
+              <button onClick={handleSaveStyle} className="m3-filled-btn" type="button">{getString('saveBtn')}</button>
+            </div>
           </div>
         </div>
       )}

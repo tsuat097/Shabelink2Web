@@ -12,6 +12,7 @@ type SpeakArgs = {
   text: string;
   style: string;   // Kotlinの "$style: $text" の style 部分
   voiceId: string; // puck/nova/...
+  signal?: AbortSignal;
   callbacks?: TtsCallbacks;
 };
 
@@ -81,7 +82,7 @@ async function playPcm16Mono24k(pcmBytes: Uint8Array, cb?: TtsCallbacks) {
 }
 
 export async function speakWithGeminiTtsRest(args: SpeakArgs): Promise<void> {
-  const { apiKey, text, style, voiceId, callbacks } = args;
+  const { apiKey, text, style, voiceId, callbacks, signal } = args;
 
   const targetVoice = (voiceId || "puck").trim() || "puck";
 
@@ -122,7 +123,8 @@ export async function speakWithGeminiTtsRest(args: SpeakArgs): Promise<void> {
     const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
+      body: JSON.stringify(payload),
+      signal,
     });
 
     if (!res.ok || !res.body) {
