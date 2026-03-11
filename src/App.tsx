@@ -175,6 +175,7 @@ function App() {
     setStatus(key, 'loading');
 
     const timeoutId = window.setTimeout(() => controller.abort(), 10000);
+    let didFallback = false;
 
     try {
       const styleForTts = currentStyle.baseTone?.trim() || currentStyle.name;
@@ -183,7 +184,7 @@ function App() {
         apiKey,
         text: t,
         style: styleForTts,
-        lang: currentStyle.partnerLang || 'English', // ★ これを追加！(相手の言語名を渡す)
+        lang: currentStyle.partnerLang || 'English',
         voiceId: bubbleVoiceId, 
         signal: controller.signal,
         callbacks: {
@@ -192,12 +193,20 @@ function App() {
           onPlaying: () => setStatus(key, 'playing'),
           onDone: () => {},
           onFallback: () => {
-            void speakDirect(t, currentStyle.partnerLocaleCode || 'en-US');
+            didFallback = true;
           }
         }
       });
+
+      // フォールバックした場合は端末TTSでアニメーションを維持
+      if (didFallback) {
+        setStatus(key, 'playing');
+        await speakDirect(t, currentStyle.partnerLocaleCode || 'en-US');
+      }
+
     } catch (e: any) {
       setDebugLogs((prev) => [...prev, `[TTS] ❌ ${e?.name || ''} ${e?.message || e}`]);
+      setStatus(key, 'playing'); // エラー時もアニメーションを維持
       await speakDirect(t, currentStyle.partnerLocaleCode || 'en-US');
     } finally {
       window.clearTimeout(timeoutId);
@@ -751,7 +760,7 @@ function App() {
                             <button className="mini-icon-btn" onClick={() => copyText(r.trans || '')} type="button">📋</button>
 
                             <button
-                              className={`mini-icon-btn ${st === 'playing' ? 'speaking' : ''}`}
+                              className={`mini-icon-btn ${st === 'playing' || st === 'loading' ? 'speaking' : ''}`}
                               onClick={() => playTts(ttsKey, r.trans || '')}
                               type="button"
                               title={
@@ -831,7 +840,7 @@ function App() {
                             <button className="mini-icon-btn" onClick={() => copyText(s.translated || '')} type="button">📋</button>
 
                             <button
-                              className={`mini-icon-btn ${st === 'playing' ? 'speaking' : ''}`}
+                              className={`mini-icon-btn ${st === 'playing' || st === 'loading' ? 'speaking' : ''}`}
                               onClick={() => playTts(ttsKey, s.translated || '')}
                               type="button"
                               title={
@@ -854,7 +863,7 @@ function App() {
         </div>
       </div>
 
-     {/* Debug Drawer (右からのスライドイン) */}
+      {/* Debug Drawer (右からのスライドイン) */}
       <div className={`debug-overlay ${showDebug ? 'open' : ''}`} onClick={() => setShowDebug(false)}></div>
       <div className={`debug-drawer ${showDebug ? 'open' : ''}`}>
         <div className="debug-header">
