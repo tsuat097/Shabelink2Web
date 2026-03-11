@@ -6,6 +6,9 @@ import { db, type ChatStylePreset, type ChatTurnEntity, type PhraseItem, support
 import { getString } from './strings';
 import './App.css';
 
+// デフォルトのプリセットデータ（配列）を読み込む
+import defaultData from './defaultPresets.json';
+
 type TtsStatus = 'idle' | 'loading' | 'playing';
 type TtsEngine = 'gemini' | 'device'; // device = speechSynthesis
 
@@ -35,9 +38,16 @@ function App() {
   const [importHistoryData, setImportHistoryData] = useState<any[]>([]);
   const [importSelections, setImportSelections] = useState<boolean[]>([]);
 
+  // エクスポート選択ダイアログ用
+  const [showExportDialog, setShowExportDialog] = useState(false);
+  const [exportSelections, setExportSelections] = useState<boolean[]>([]);
+
   // 音声認識（Web Speech API）
   const recognitionRef = useRef<any>(null);
   const [isListening, setIsListening] = useState(false);
+
+  // ▼▼▼ 二重登録防止用のロック ▼▼▼
+  const isInitializingDb = useRef(false);
 
   // ----------------------------
   // TTS: エンジン切替（カードごと）
@@ -48,7 +58,7 @@ function App() {
     setTtsEngineByKey((prev) => ({ ...prev, [key]: engine }));
 
   // ----------------------------
-  // TTS: 状態（カードごと表示）ただし同時再生はしない（別カード押したら切替）
+  // TTS: 状態（カードごと表示）
   // ----------------------------
   const [ttsStatusByKey, setTtsStatusByKey] = useState<Record<string, TtsStatus>>({});
   const getStatus = (key: string): TtsStatus => ttsStatusByKey[key] ?? 'idle';
@@ -128,7 +138,7 @@ function App() {
     setActiveTtsKey(null);
   };
 
-  // TTS再生：「別カード押したら今の再生を止めて切替」
+  // TTS再生
   const playTts = async (key: string, text: string) => {
     const t = (text || '').trim();
     if (!t || !currentStyle) return;
@@ -136,12 +146,10 @@ function App() {
     const engine = getEngine(key);
     const bubbleVoiceId = getVoiceIdForBubble(key);
 
-    // 他カードが再生中なら止める（切替）
     if (activeTtsKey && activeTtsKey !== key) {
       stopAnyTts();
     }
 
-    // 同じカードが再生中/待機中なら「停止」
     const st = getStatus(key);
     if (activeTtsKey === key && st !== 'idle') {
       stopAnyTts();
@@ -150,7 +158,6 @@ function App() {
 
     setActiveTtsKey(key);
 
-    // 端末TTS
     if (engine === 'device') {
       setStatus(key, 'playing');
       try {
@@ -162,7 +169,6 @@ function App() {
       return;
     }
 
-    // GeminiTTS
     if (!apiKey) {
       alert('APIキーが設定されていません。');
       setStatus(key, 'idle');
@@ -198,7 +204,6 @@ function App() {
         }
       });
 
-      // フォールバックした場合は端末TTSでアニメーションを維持
       if (didFallback) {
         setStatus(key, 'playing');
         await speakDirect(t, currentStyle.partnerLocaleCode || 'en-US');
@@ -206,7 +211,7 @@ function App() {
 
     } catch (e: any) {
       setDebugLogs((prev) => [...prev, `[TTS] ❌ ${e?.name || ''} ${e?.message || e}`]);
-      setStatus(key, 'playing'); // エラー時もアニメーションを維持
+      setStatus(key, 'playing');
       await speakDirect(t, currentStyle.partnerLocaleCode || 'en-US');
     } finally {
       window.clearTimeout(timeoutId);
@@ -268,47 +273,44 @@ function App() {
   // DB初期化と履歴読み込み
   // ==========================================
   const initDB = useCallback(async () => {
-    let allStyles = await db.styles.toArray();
+    // ★ Reactの二重読み込みによる重複登録を完全にブロックする
+    if (isInitializingDb.current) return;
+    isInitializingDb.current = true;
 
-    // 1. もしDBが空なら、デフォルトのスタイルを作成する
-    if (allStyles.length === 0) {
-      const defaultStyle: ChatStylePreset = {
-        name: '青島 (デフォルト)',
-        myLang: '日本語',
-        myLocaleCode: 'ja-JP',
-        partnerLang: '中国語',
-        partnerLocaleCode: 'zh-CN',
-        baseTone: '丁寧',
-        pattern1: '自然な会話として翻訳してください。',
-        pattern2: '',
-        pattern3: '',
-        myGender: '',
-        partnerGender: '',
-        relationship: '',
-        voiceId: 'puck'
-      };
-      await db.styles.add(defaultStyle);
-      allStyles = await db.styles.toArray();
-    } // ← ★ここで if 文をしっかり閉じる！
+    try {
+      // DBに入っている件数を正確にカウントする
+      const count = await db.styles.count();
 
-    // 2. 読み込んだすべてのスタイルをセット
-    setPresets(allStyles);
-
-    // 3. localStorageから前回使っていたスタイルを復元する
-    const savedStyleId = localStorage.getItem('lastUsedStyleId');
-    let targetStyle = allStyles[0]; // デフォルトは先頭のスタイル
-
-    if (savedStyleId) {
-      // 保存されていたIDと一致するスタイルを探す
-      const found = allStyles.find(s => s.id === Number(savedStyleId));
-      if (found) {
-        targetStyle = found;
+      // 1. もしDBが空なら、JSONファイルから一括追加する
+      if (count === 0) {
+        if (Array.isArray(defaultData) && defaultData.length > 0) {
+          await db.styles.bulkAdd(defaultData as ChatStylePreset[]);
+        }
       }
-    }
 
-    // 4. 見つかったスタイル（前回使っていたもの）を現在のスタイルとしてセット
-    setCurrentStyle(targetStyle);
-    if (targetStyle?.id) loadHistory(targetStyle.id);
+      // 2. 読み込んだすべてのスタイルをセット
+      const allStyles = await db.styles.toArray();
+      setPresets(allStyles);
+
+      // 3. localStorageから前回使っていたスタイルを復元する
+      const savedStyleId = localStorage.getItem('lastUsedStyleId');
+      let targetStyle = allStyles[0];
+
+      if (savedStyleId) {
+        const found = allStyles.find(s => s.id === Number(savedStyleId));
+        if (found) {
+          targetStyle = found;
+        }
+      }
+
+      // 4. 現在のスタイルとしてセット
+      setCurrentStyle(targetStyle);
+      if (targetStyle?.id) loadHistory(targetStyle.id);
+
+    } finally {
+      // 処理がすべて終わったらロックを解除する
+      isInitializingDb.current = false;
+    }
   }, []);
 
   useEffect(() => {
@@ -328,20 +330,33 @@ function App() {
   // ==========================================
   // エクスポート / インポート
   // ==========================================
-  const handleExportJson = async () => {
+  const openExportDialog = () => {
+    setExportSelections(new Array(presets.length).fill(true));
+    setShowSettingsDialog(false);
+    setShowExportDialog(true);
+  };
+
+  const executeExport = () => {
+    const selectedStyles = presets.filter((_, idx) => exportSelections[idx]);
+
+    if (selectedStyles.length === 0) {
+      alert('エクスポートするスタイルを1つ以上選択してください。');
+      return;
+    }
+
     try {
-      const styles = await db.styles.toArray();
-      const historyData = await db.history.toArray();
-      const exportData = { styles, history: historyData };
-      const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+      const blob = new Blob([JSON.stringify(selectedStyles, null, 2)], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `shabelink2_backup_${new Date().getTime()}.json`;
+      a.download = `shabelink2_styles_${new Date().getTime()}.json`;
       a.click();
       URL.revokeObjectURL(url);
-    } catch {
+
+      setShowExportDialog(false);
+    } catch (e) {
       alert('エクスポートに失敗しました。');
+      console.error(e);
     }
   };
 
@@ -755,7 +770,7 @@ function App() {
                         {r.trans && r.trans !== getString('noTranslation') && <div className="res-trans">{r.trans}</div>}
 
                         <div className="result-footer">
-                          {/* ボイス選択（ネイティブ風のテキストトリガー） */}
+                          {/* ボイス選択 */}
                           <div
                             className="voice-selector-trigger"
                             onClick={() => setVoiceSelectModalConfig({ isOpen: true, ttsKey })}
@@ -763,7 +778,7 @@ function App() {
                             {actingVoices.find(v => v.id === bubbleVoiceId)?.displayName || bubbleVoiceId}
                           </div>
 
-                          {/* トグル＝エンジン切替（カード別） */}
+                          {/* トグル＝エンジン切替 */}
                           <label className="auto-speak" title={engine === 'gemini' ? getString('ttsAiTitle') : getString('ttsDeviceTitle')}>
                             <input
                               type="checkbox"
@@ -836,7 +851,7 @@ function App() {
                         {s.translated && s.translated !== getString('noTranslation') && <div className="res-trans">{s.translated}</div>}
 
                         <div className="result-footer">
-                          {/* ボイス選択（ネイティブ風のテキストトリガー） */}
+                          {/* ボイス選択 */}
                           <div
                             className="voice-selector-trigger"
                             onClick={() => setVoiceSelectModalConfig({ isOpen: true, ttsKey })}
@@ -921,6 +936,27 @@ function App() {
               <h2 style={{ margin: 0, fontSize: '1.4rem' }}>{getString('importSelectTitle')}</h2>
             </div>
 
+            {/* ▼▼▼ ここにインポートの「全選択」「全解除」ボタンを追加 ▼▼▼ */}
+            <div style={{ display: 'flex', gap: '12px', padding: '0 24px', marginTop: '8px' }}>
+              <button
+                type="button"
+                className="m3-text-btn"
+                style={{ padding: '4px 8px', fontSize: '0.85rem', minWidth: 'auto', color: '#673ab7' }}
+                onClick={() => setImportSelections(new Array(importCandidates.length).fill(true))}
+              >
+                ✓ 全選択
+              </button>
+              <button
+                type="button"
+                className="m3-text-btn"
+                style={{ padding: '4px 8px', fontSize: '0.85rem', minWidth: 'auto', color: '#666' }}
+                onClick={() => setImportSelections(new Array(importCandidates.length).fill(false))}
+              >
+                □ 全解除
+              </button>
+            </div>
+            {/* ▲▲▲ ここまで ▲▲▲ */}
+
             <div
               className="dialog-body"
               onClick={(e) => {
@@ -966,6 +1002,61 @@ function App() {
         </div>
       )}
 
+      {/* エクスポート選択ダイアログ */}
+      {showExportDialog && (
+        <div className="modal-overlay" onClick={() => setShowExportDialog(false)}>
+          <div className="modal-content m3-dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="dialog-header">
+              <h2 style={{ margin: 0, fontSize: '1.4rem' }}>エクスポートするスタイル</h2>
+            </div>
+
+            <div style={{ display: 'flex', gap: '12px', padding: '0 24px', marginTop: '8px' }}>
+              <button
+                type="button"
+                className="m3-text-btn"
+                style={{ padding: '4px 8px', fontSize: '0.85rem', minWidth: 'auto', color: '#673ab7' }}
+                onClick={() => setExportSelections(new Array(presets.length).fill(true))}
+              >
+                ✓ 全選択
+              </button>
+              <button
+                type="button"
+                className="m3-text-btn"
+                style={{ padding: '4px 8px', fontSize: '0.85rem', minWidth: 'auto', color: '#666' }}
+                onClick={() => setExportSelections(new Array(presets.length).fill(false))}
+              >
+                □ 全解除
+              </button>
+            </div>
+
+            <div className="dialog-body">
+              {presets.map((style, idx) => (
+                <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 0', borderBottom: '1px solid #e0e0e0' }}>
+                  <input
+                    type="checkbox"
+                    style={{ transform: 'scale(1.5)', cursor: 'pointer' }}
+                    checked={exportSelections[idx]}
+                    onChange={(e) => {
+                      const newSelections = [...exportSelections];
+                      newSelections[idx] = e.target.checked;
+                      setExportSelections(newSelections);
+                    }}
+                  />
+                  <div style={{ flex: 1, fontSize: '1rem', fontWeight: 'bold', color: '#333' }}>
+                    {style.name}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="dialog-footer">
+              <button onClick={() => setShowExportDialog(false)} className="m3-text-btn" type="button">キャンセル</button>
+              <button onClick={executeExport} className="m3-filled-btn" type="button">エクスポート</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 設定ダイアログ */}
       {showSettingsDialog && (
         <div className="modal-overlay" onClick={() => setShowSettingsDialog(false)}>
@@ -977,15 +1068,22 @@ function App() {
             <div className="dialog-body">
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                 <span>{getString('debugToggle')}</span>
-                <input type="checkbox" checked={showDebug} onChange={(e) => {
-                  const isChecked = e.target.checked; setShowDebug(isChecked); if (isChecked) { setShowSettingsDialog(false); }
-                }}
+                <input
+                  type="checkbox"
+                  checked={showDebug}
+                  onChange={(e) => {
+                    const isChecked = e.target.checked;
+                    setShowDebug(isChecked);
+                    if (isChecked) {
+                      setShowSettingsDialog(false);
+                    }
+                  }}
                   style={{ transform: 'scale(1.5)' }}
                 />
               </div>
 
               <div style={{ display: 'flex', gap: '12px', marginTop: '16px' }}>
-                <button className="m3-filled-btn" style={{ flex: 1, background: '#f0edf5', color: '#111' }} onClick={handleExportJson} type="button">
+                <button className="m3-filled-btn" style={{ flex: 1, background: '#f0edf5', color: '#111' }} onClick={openExportDialog} type="button">
                   {getString('exportBtn')}
                 </button>
                 <label className="m3-filled-btn" style={{ flex: 1, background: '#f0edf5', color: '#111', textAlign: 'center', cursor: 'pointer' }}>
