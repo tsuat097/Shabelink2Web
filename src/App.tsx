@@ -956,7 +956,10 @@ function App() {
             <div className="dialog-body"> 
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                 <span>{getString('debugToggle')}</span>
-                <input type="checkbox" checked={showDebug} onChange={(e) => setShowDebug(e.target.checked)} style={{ transform: 'scale(1.5)' }} />
+                <input type="checkbox" checked={showDebug} onChange={(e) => {const isChecked = e.target.checked;setShowDebug(isChecked); if (isChecked) {setShowSettingsDialog(false);}
+  }} 
+  style={{ transform: 'scale(1.5)' }} 
+/>
               </div>
 
               <div style={{ display: 'flex', gap: '12px', marginTop: '16px' }}>
