@@ -854,13 +854,34 @@ function App() {
         </div>
       </div>
 
-      {/* Debug overlay */}
-      {showDebug && debugLogs.length > 0 && (
-        <div className="debug-console">
-          <div className="debug-header">Debug Info</div>
-          <pre ref={debugBodyRef} className="debug-body">{debugLogs.join('\n')}</pre>
+     {/* Debug Drawer (右からのスライドイン) */}
+      <div className={`debug-overlay ${showDebug ? 'open' : ''}`} onClick={() => setShowDebug(false)}></div>
+      <div className={`debug-drawer ${showDebug ? 'open' : ''}`}>
+        <div className="debug-header">
+          <span>🛠 Debug Info ({debugLogs.length})</span>
+          <button 
+            onClick={() => setShowDebug(false)} 
+            style={{ background: 'none', border: 'none', fontSize: '1.2rem', cursor: 'pointer', color: '#fff' }} 
+            title="閉じる"
+            type="button"
+          >❌</button>
         </div>
-      )}
+        
+        <pre ref={debugBodyRef} className="debug-body">
+          {debugLogs.length === 0 ? 'No logs yet...' : debugLogs.join('\n')}
+        </pre>
+        
+        <div className="debug-footer">
+          <button 
+            onClick={() => setDebugLogs([])} 
+            className="m3-filled-btn" 
+            style={{ width: '100%', background: '#444' }} 
+            type="button"
+          >
+            🗑️ ログをクリア
+          </button>
+        </div>
+      </div>
 
       {/* インポート選択ダイアログ */}
       {showImportDialog && (
