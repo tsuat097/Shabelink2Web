@@ -112,7 +112,7 @@ export const supportedLocales: LocaleInfo[] = [
     { code: "en-PH", displayName: "英語 (フィリピン)" },
     { code: "en-SG", displayName: "英語 (シンガポール)" },
     { code: "en-TZ", displayName: "英語 (タンザニア)" },
-    { code: "en-US", displayName: "英語 (アメリカ合衆国)?" }, // ?を追加
+    { code: "en-US", displayName: "英語 (アメリカ合衆国)" }, 
     { code: "en-ZA", displayName: "英語 (南アフリカ)" },
     { code: "es-AR", displayName: "スペイン語 (アルゼンチン)" },
     { code: "es-BO", displayName: "スペイン語 (ボリビア)" },
