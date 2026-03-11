@@ -59,16 +59,18 @@ function App() {
   const ttsAbortRef = useRef<AbortController | null>(null);
 
   // ----------------------------
-  // ★ TTS: ボイスID選択（カードごと）を追加
+  // TTS: ボイスID選択（カードごと）を追加
   // ----------------------------
   const [voiceIdByKey, setVoiceIdByKey] = useState<Record<string, string>>({});
   const getVoiceIdForBubble = (key: string): string => {
-    // 優先順位: 1.ローカルな選択 2.currentStyleのデフォルト 3.puck
     return voiceIdByKey[key] ?? currentStyle?.voiceId ?? 'puck';
   };
   const setVoiceIdForBubble = (key: string, voiceId: string) => {
     setVoiceIdByKey((prev) => ({ ...prev, [key]: voiceId }));
   };
+
+  // ボイス選択モーダルの開閉状態管理
+  const [voiceSelectModalConfig, setVoiceSelectModalConfig] = useState<{ isOpen: boolean, ttsKey: string } | null>(null);
 
   // ==========================================
   // 共通ユーティリティ
@@ -88,15 +90,6 @@ function App() {
     }
   };
 
-  // ボイスラベルマップは不要になり、actingVoices を直接使うため削除
-  // const voiceLabelMap ... は削除されます
-
- /* const getVoiceLabel = (voiceId?: string) => {
-    const voiceInfo = actingVoices.find(v => v.id === voiceId);
-    return voiceInfo ? voiceInfo.displayName : (voiceId || 'Voice');
-  };
-*/
-
   // speechSynthesis（端末TTS）
   const speakDirect = (text: string, lang: string) => {
     const t = (text || '').trim();
@@ -107,7 +100,7 @@ function App() {
       try {
         window.speechSynthesis.cancel();
         const u = new SpeechSynthesisUtterance(t);
-        u.lang = lang; // ★ロケールコードを渡す
+        u.lang = lang;
         u.onend = () => resolve();
         u.onerror = () => resolve();
         window.speechSynthesis.speak(u);
@@ -141,7 +134,7 @@ function App() {
     if (!t || !currentStyle) return;
 
     const engine = getEngine(key);
-    const bubbleVoiceId = getVoiceIdForBubble(key); // ★そのバブル固有のボイスIDを取得
+    const bubbleVoiceId = getVoiceIdForBubble(key); 
 
     // 他カードが再生中なら止める（切替）
     if (activeTtsKey && activeTtsKey !== key) {
@@ -161,7 +154,6 @@ function App() {
     if (engine === 'device') {
       setStatus(key, 'playing');
       try {
-        // ★ speechSynthesis にはロケールコードを渡す
         await speakDirect(t, currentStyle.partnerLocaleCode || 'en-US');
       } finally {
         setStatus(key, 'idle');
@@ -182,7 +174,6 @@ function App() {
     ttsAbortRef.current = controller;
     setStatus(key, 'loading');
 
-    // タイムアウト（例：10秒）
     const timeoutId = window.setTimeout(() => controller.abort(), 10000);
 
     try {
@@ -192,17 +183,14 @@ function App() {
         apiKey,
         text: t,
         style: styleForTts,
-        // ★ GeminiTTS には partnerLang を渡し、ボイスIDもバブル固有のものを使用
-        lang: currentStyle.partnerLang || 'English',
-        voiceId: bubbleVoiceId, // ★バブル固有のボイスIDを使用
+        lang: currentStyle.partnerLang || 'English', // ★ これを追加！(相手の言語名を渡す)
+        voiceId: bubbleVoiceId, 
         signal: controller.signal,
         callbacks: {
           onLog: (m) => setDebugLogs((prev) => [...prev, `[TTS] ${m}`]),
           onLoading: () => setStatus(key, 'loading'),
           onPlaying: () => setStatus(key, 'playing'),
           onDone: () => {},
-
-          // GeminiTTSが死んだら端末TTSで保険
           onFallback: () => {
             void speakDirect(t, currentStyle.partnerLocaleCode || 'en-US');
           }
@@ -210,7 +198,6 @@ function App() {
       });
     } catch (e: any) {
       setDebugLogs((prev) => [...prev, `[TTS] ❌ ${e?.name || ''} ${e?.message || e}`]);
-      // ★エラー時も partnerLocaleCode を使用
       await speakDirect(t, currentStyle.partnerLocaleCode || 'en-US');
     } finally {
       window.clearTimeout(timeoutId);
@@ -698,8 +685,7 @@ function App() {
             type="button"
             onClick={isListening ? stopSpeechRecognition : startSpeechRecognition}
             disabled={isTranslating || !currentStyle}
-            aria-label={isListening ? getString('sttStop') : getString('sttInput')}
-            title={isListening ? getString('sttStop') : getString('sttInput')}
+            title={isListening ? "停止" : "入力"}
           >
             🎙️
           </button>
@@ -726,7 +712,7 @@ function App() {
                     const ttsKey = `stream-${idx}`;
                     const st = getStatus(ttsKey);
                     const engine = getEngine(ttsKey);
-                    const bubbleVoiceId = getVoiceIdForBubble(ttsKey); // ★そのバブル固有のボイスIDを取得
+                    const bubbleVoiceId = getVoiceIdForBubble(ttsKey);
 
                     return (
                       <div key={idx} className="rich-result-container">
@@ -739,21 +725,13 @@ function App() {
                         {r.trans && r.trans !== getString('noTranslation') && <div className="res-trans">{r.trans}</div>}
 
                         <div className="result-footer">
-                          {/* メイン画面のボイス選択ドロップダウン */}
-                          <select
-                              className="m3-input m3-select"
-                              style={{ flex: 1, minWidth: '150px' }}
-                              // ★ value をローカルstateから取得
-                              value={bubbleVoiceId}
-                              onChange={async (e) => {
-                                // ★ ローカルstateを更新 (globalな currentStyle.voiceId は更新しない)
-                                setVoiceIdForBubble(ttsKey, e.target.value);
-                              }}
-                            >
-                              {actingVoices.map(voice => (
-                                <option key={voice.id} value={voice.id}>{voice.displayName}</option>
-                              ))}
-                            </select>
+                          {/* ボイス選択（ネイティブ風のテキストトリガー） */}
+                          <div 
+                            className="voice-selector-trigger" 
+                            onClick={() => setVoiceSelectModalConfig({ isOpen: true, ttsKey })}
+                          >
+                            {actingVoices.find(v => v.id === bubbleVoiceId)?.displayName || bubbleVoiceId}
+                          </div>
 
                           {/* トグル＝エンジン切替（カード別） */}
                           <label className="auto-speak" title={engine === 'gemini' ? getString('ttsAiTitle') : getString('ttsDeviceTitle')}>
@@ -807,7 +785,7 @@ function App() {
                     const ttsKey = `turn-${String(turn.id)}-${idx}`;
                     const st = getStatus(ttsKey);
                     const engine = getEngine(ttsKey);
-                    const bubbleVoiceId = getVoiceIdForBubble(ttsKey); // ★そのバブル固有のボイスIDを取得
+                    const bubbleVoiceId = getVoiceIdForBubble(ttsKey);
 
                     const legacyDetails =
                       s.original && s.original.trim().length > 0 && s.original !== turn.input ? s.original : '';
@@ -828,21 +806,13 @@ function App() {
                         {s.translated && s.translated !== getString('noTranslation') && <div className="res-trans">{s.translated}</div>}
 
                         <div className="result-footer">
-                           {/* メイン画面のボイス選択ドロップダウン */}
-                          <select
-                              className="m3-input m3-select"
-                              style={{ flex: 1, minWidth: '150px' }}
-                              // ★ value をローカルstateから取得
-                              value={bubbleVoiceId}
-                              onChange={async (e) => {
-                                // ★ ローカルstateを更新 (globalな currentStyle.voiceId は更新しない)
-                                setVoiceIdForBubble(ttsKey, e.target.value);
-                              }}
-                            >
-                              {actingVoices.map(voice => (
-                                <option key={voice.id} value={voice.id}>{voice.displayName}</option>
-                              ))}
-                            </select>
+                          {/* ボイス選択（ネイティブ風のテキストトリガー） */}
+                          <div 
+                            className="voice-selector-trigger" 
+                            onClick={() => setVoiceSelectModalConfig({ isOpen: true, ttsKey })}
+                          >
+                            {actingVoices.find(v => v.id === bubbleVoiceId)?.displayName || bubbleVoiceId}
+                          </div>
 
                           <label className="auto-speak" title={engine === 'gemini' ? getString('ttsAiTitle') : getString('ttsDeviceTitle')}>
                             <input
@@ -903,12 +873,11 @@ function App() {
             <div 
                 className="dialog-body" 
                 onClick={(e) => {
-                    // 入力欄以外の背景部分をタップした時にキーボードを閉じる
                     if (e.target === e.currentTarget) {
                       (document.activeElement as HTMLElement)?.blur();
                     }
                  }}
-                >{/* overflow-x:hidden は CSSで対応 */}
+                >
               {importCandidates.map((candidate, idx) => (
                 <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 0', borderBottom: '1px solid #e0e0e0' }}>
                   <input
@@ -954,7 +923,7 @@ function App() {
               <h2 style={{ margin: 0, fontSize: '1.4rem' }}>{getString('settingsTitle')}</h2>
             </div>
 
-            <div className="dialog-body"> {/* overflow-x:hidden は CSSで対応 */}
+            <div className="dialog-body"> 
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                 <span>{getString('debugToggle')}</span>
                 <input type="checkbox" checked={showDebug} onChange={(e) => setShowDebug(e.target.checked)} style={{ transform: 'scale(1.5)' }} />
@@ -990,7 +959,7 @@ function App() {
               <h2 style={{ margin: 0, fontSize: '1.4rem' }}>{isAddingNew ? getString('styleNew') : getString('styleEdit')}</h2>
             </div>
 
-            <div className="dialog-body">
+            <div className="dialog-body" onClick={(e) => { if (e.target === e.currentTarget) (document.activeElement as HTMLElement)?.blur(); }}>
               <div className="m3-input-group"><label>{getString('styleName')}</label><input className="m3-input" value={editingStyle.name || ''} onChange={(e) => setEditingStyle({ ...editingStyle, name: e.target.value })} /></div>
               <div className="m3-row">
                 <div className="m3-input-group flex-1">
@@ -1061,6 +1030,30 @@ function App() {
           </div>
         </div>
       )}
+
+      {/* ボイス選択モーダル（ネイティブ風リスト） */}
+      {voiceSelectModalConfig?.isOpen && (
+        <div className="modal-overlay" onClick={() => setVoiceSelectModalConfig(null)}>
+          <div className="voice-modal-content" onClick={(e) => e.stopPropagation()}>
+            {actingVoices.map(voice => {
+              const isActive = getVoiceIdForBubble(voiceSelectModalConfig.ttsKey) === voice.id;
+              return (
+                <div 
+                  key={voice.id} 
+                  className={`voice-list-item ${isActive ? 'active' : ''}`}
+                  onClick={() => {
+                    setVoiceIdForBubble(voiceSelectModalConfig.ttsKey, voice.id);
+                    setVoiceSelectModalConfig(null);
+                  }}
+                >
+                  {voice.displayName}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
