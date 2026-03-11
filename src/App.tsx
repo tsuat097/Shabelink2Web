@@ -134,7 +134,7 @@ function App() {
     if (!t || !currentStyle) return;
 
     const engine = getEngine(key);
-    const bubbleVoiceId = getVoiceIdForBubble(key); 
+    const bubbleVoiceId = getVoiceIdForBubble(key);
 
     // 他カードが再生中なら止める（切替）
     if (activeTtsKey && activeTtsKey !== key) {
@@ -185,13 +185,13 @@ function App() {
         text: t,
         style: styleForTts,
         lang: currentStyle.partnerLang || 'English',
-        voiceId: bubbleVoiceId, 
+        voiceId: bubbleVoiceId,
         signal: controller.signal,
         callbacks: {
           onLog: (m) => setDebugLogs((prev) => [...prev, `[TTS] ${m}`]),
           onLoading: () => setStatus(key, 'loading'),
           onPlaying: () => setStatus(key, 'playing'),
-          onDone: () => {},
+          onDone: () => { },
           onFallback: () => {
             didFallback = true;
           }
@@ -269,6 +269,8 @@ function App() {
   // ==========================================
   const initDB = useCallback(async () => {
     let allStyles = await db.styles.toArray();
+
+    // 1. もしDBが空なら、デフォルトのスタイルを作成する
     if (allStyles.length === 0) {
       const defaultStyle: ChatStylePreset = {
         name: '青島 (デフォルト)',
@@ -287,10 +289,26 @@ function App() {
       };
       await db.styles.add(defaultStyle);
       allStyles = await db.styles.toArray();
-    }
+    } // ← ★ここで if 文をしっかり閉じる！
+
+    // 2. 読み込んだすべてのスタイルをセット
     setPresets(allStyles);
-    setCurrentStyle(allStyles[0]);
-    if (allStyles[0]?.id) loadHistory(allStyles[0].id);
+
+    // 3. localStorageから前回使っていたスタイルを復元する
+    const savedStyleId = localStorage.getItem('lastUsedStyleId');
+    let targetStyle = allStyles[0]; // デフォルトは先頭のスタイル
+
+    if (savedStyleId) {
+      // 保存されていたIDと一致するスタイルを探す
+      const found = allStyles.find(s => s.id === Number(savedStyleId));
+      if (found) {
+        targetStyle = found;
+      }
+    }
+
+    // 4. 見つかったスタイル（前回使っていたもの）を現在のスタイルとしてセット
+    setCurrentStyle(targetStyle);
+    if (targetStyle?.id) loadHistory(targetStyle.id);
   }, []);
 
   useEffect(() => {
@@ -639,7 +657,10 @@ function App() {
             onChange={(e) => {
               const selectedId = Number(e.target.value);
               const selected = presets.find((p) => p.id === selectedId);
-              if (selected) setCurrentStyle(selected);
+              if (selected) {
+                setCurrentStyle(selected);
+                localStorage.setItem('lastUsedStyleId', String(selectedId));
+              }
             }}
           >
             {presets.map((preset) => <option key={preset.id} value={preset.id}>{preset.name}</option>)}
@@ -735,8 +756,8 @@ function App() {
 
                         <div className="result-footer">
                           {/* ボイス選択（ネイティブ風のテキストトリガー） */}
-                          <div 
-                            className="voice-selector-trigger" 
+                          <div
+                            className="voice-selector-trigger"
                             onClick={() => setVoiceSelectModalConfig({ isOpen: true, ttsKey })}
                           >
                             {actingVoices.find(v => v.id === bubbleVoiceId)?.displayName || bubbleVoiceId}
@@ -765,8 +786,8 @@ function App() {
                               type="button"
                               title={
                                 st === 'loading' ? getString('ttsLoading')
-                                : st !== 'idle' ? getString('ttsStop')
-                                : getString('ttsPlay')
+                                  : st !== 'idle' ? getString('ttsStop')
+                                    : getString('ttsPlay')
                               }
                             >
                               <span className="speaker-icon">🔊</span>
@@ -816,8 +837,8 @@ function App() {
 
                         <div className="result-footer">
                           {/* ボイス選択（ネイティブ風のテキストトリガー） */}
-                          <div 
-                            className="voice-selector-trigger" 
+                          <div
+                            className="voice-selector-trigger"
                             onClick={() => setVoiceSelectModalConfig({ isOpen: true, ttsKey })}
                           >
                             {actingVoices.find(v => v.id === bubbleVoiceId)?.displayName || bubbleVoiceId}
@@ -845,8 +866,8 @@ function App() {
                               type="button"
                               title={
                                 st === 'loading' ? getString('ttsLoading')
-                                : st !== 'idle' ? getString('ttsStop')
-                                : getString('ttsPlay')
+                                  : st !== 'idle' ? getString('ttsStop')
+                                    : getString('ttsPlay')
                               }
                             >
                               <span className="speaker-icon">🔊</span>
@@ -868,23 +889,23 @@ function App() {
       <div className={`debug-drawer ${showDebug ? 'open' : ''}`}>
         <div className="debug-header">
           <span>🛠 Debug Info ({debugLogs.length})</span>
-          <button 
-            onClick={() => setShowDebug(false)} 
-            style={{ background: 'none', border: 'none', fontSize: '1.2rem', cursor: 'pointer', color: '#fff' }} 
+          <button
+            onClick={() => setShowDebug(false)}
+            style={{ background: 'none', border: 'none', fontSize: '1.2rem', cursor: 'pointer', color: '#fff' }}
             title="閉じる"
             type="button"
           >❌</button>
         </div>
-        
+
         <pre ref={debugBodyRef} className="debug-body">
           {debugLogs.length === 0 ? 'No logs yet...' : debugLogs.join('\n')}
         </pre>
-        
+
         <div className="debug-footer">
-          <button 
-            onClick={() => setDebugLogs([])} 
-            className="m3-filled-btn" 
-            style={{ width: '100%', background: '#444' }} 
+          <button
+            onClick={() => setDebugLogs([])}
+            className="m3-filled-btn"
+            style={{ width: '100%', background: '#444' }}
             type="button"
           >
             🗑️ ログをクリア
@@ -900,14 +921,14 @@ function App() {
               <h2 style={{ margin: 0, fontSize: '1.4rem' }}>{getString('importSelectTitle')}</h2>
             </div>
 
-            <div 
-                className="dialog-body" 
-                onClick={(e) => {
-                    if (e.target === e.currentTarget) {
-                      (document.activeElement as HTMLElement)?.blur();
-                    }
-                 }}
-                >
+            <div
+              className="dialog-body"
+              onClick={(e) => {
+                if (e.target === e.currentTarget) {
+                  (document.activeElement as HTMLElement)?.blur();
+                }
+              }}
+            >
               {importCandidates.map((candidate, idx) => (
                 <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 0', borderBottom: '1px solid #e0e0e0' }}>
                   <input
@@ -953,13 +974,14 @@ function App() {
               <h2 style={{ margin: 0, fontSize: '1.4rem' }}>{getString('settingsTitle')}</h2>
             </div>
 
-            <div className="dialog-body"> 
+            <div className="dialog-body">
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                 <span>{getString('debugToggle')}</span>
-                <input type="checkbox" checked={showDebug} onChange={(e) => {const isChecked = e.target.checked;setShowDebug(isChecked); if (isChecked) {setShowSettingsDialog(false);}
-  }} 
-  style={{ transform: 'scale(1.5)' }} 
-/>
+                <input type="checkbox" checked={showDebug} onChange={(e) => {
+                  const isChecked = e.target.checked; setShowDebug(isChecked); if (isChecked) { setShowSettingsDialog(false); }
+                }}
+                  style={{ transform: 'scale(1.5)' }}
+                />
               </div>
 
               <div style={{ display: 'flex', gap: '12px', marginTop: '16px' }}>
@@ -1003,7 +1025,7 @@ function App() {
                   <select
                     className="m3-input m3-select"
                     value={editingStyle.myLocaleCode || ''}
-                    onChange={e => setEditingStyle({...editingStyle, myLocaleCode: e.target.value})}
+                    onChange={e => setEditingStyle({ ...editingStyle, myLocaleCode: e.target.value })}
                   >
                     {supportedLocales.map(locale => (
                       <option key={locale.code} value={locale.code}>{locale.displayName}</option>
@@ -1020,7 +1042,7 @@ function App() {
                   <select
                     className="m3-input m3-select"
                     value={editingStyle.partnerLocaleCode || ''}
-                    onChange={e => setEditingStyle({...editingStyle, partnerLocaleCode: e.target.value})}
+                    onChange={e => setEditingStyle({ ...editingStyle, partnerLocaleCode: e.target.value })}
                   >
                     {supportedLocales.map(locale => (
                       <option key={locale.code} value={locale.code}>{locale.displayName}</option>
@@ -1071,8 +1093,8 @@ function App() {
             {actingVoices.map(voice => {
               const isActive = getVoiceIdForBubble(voiceSelectModalConfig.ttsKey) === voice.id;
               return (
-                <div 
-                  key={voice.id} 
+                <div
+                  key={voice.id}
                   className={`voice-list-item ${isActive ? 'active' : ''}`}
                   onClick={() => {
                     setVoiceIdForBubble(voiceSelectModalConfig.ttsKey, voice.id);
