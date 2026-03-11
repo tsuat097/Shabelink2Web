@@ -126,16 +126,15 @@ body {
 .main-translate-btn:not(:disabled) { background-color: #673ab7; color: white; }
 
 /* 履歴エリア */
-.history-area { display: flex; flex-direction: column; gap: 16px; margin-top: 16px; padding-bottom: 24px; }
+.history-area { display: flex; flex-direction: column; gap: 24px; margin-top: 16px; padding-bottom: 24px; }
 
 .turn-block {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  width: 92%;
+  gap: 12px;
+  width: 100%; /* 92%から100%に変更し、全体幅をしっかり使う */
 }
-.turn-block.me { align-self: flex-end; }
-.turn-block.partner { align-self: flex-start; }
+/* ※ここに記載されていた .turn-block.me と .turn-block.partner は削除（AI返答まで右に寄る原因） */
 
 .bubble {
   padding: 12px 16px;
@@ -147,26 +146,40 @@ body {
   font-size: 1.1rem;
   font-weight: bold;
   color: #1a1a1a;
+  width: fit-content; /* 中身に合わせて幅を縮める */
+  max-width: 90%;     /* 画面幅いっぱいに広がらないようにする */
 }
-.input-bubble.me { background-color: #E3F2FD; border-bottom-right-radius: 4px; }
-.input-bubble.partner { background-color: #DCEDC8; border-bottom-left-radius: 4px; }
+.input-bubble.me { 
+  background-color: #E3F2FD; 
+  border-bottom-right-radius: 4px; 
+  align-self: flex-end; /* 自分の入力バブルだけを右に寄せる */
+}
+.input-bubble.partner { 
+  background-color: #DCEDC8; 
+  border-bottom-left-radius: 4px; 
+  align-self: flex-start; /* 相手の入力バブルは左に寄せる */
+}
 
-/* AI結果カード */
+/* AI結果カードの「変な外枠」を透明にして消す */
 .ai-bubble {
-  background-color: #F7F2FA;
-  border: 1px solid #e0e0e0;
+  background-color: transparent;
+  border: none;
+  padding: 0;
+  width: 100%;
 }
 
-.suggestions-list { display: flex; flex-direction: column; gap: 8px; }
+.suggestions-list { display: flex; flex-direction: column; gap: 16px; }
 
+/* ここが実際のAI結果のバブル（Kotlin版に寄せて少し明るい紫に） */
 .rich-result-container { 
-  background-color: #ECE6F0;
-  border-radius: 12px;
-  padding: 14px;
+  background-color: #f7f2fa;
+  border-radius: 16px;
+  padding: 16px;
   display: flex; 
   flex-direction: column; 
-  gap: 6px; 
-  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  gap: 8px; 
+  /* 外枠が消えた代わりに、うっすら影を落とすと綺麗です */
+  box-shadow: 0 2px 8px rgba(0,0,0,0.04);
 }
 
 .res-trans { font-size: 1.35rem; font-weight: bold; color: #1a1a1a; line-height: 1.4; }
